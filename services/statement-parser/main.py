@@ -55,39 +55,72 @@ def read_excel(raw: bytes, password: str | None) -> str:
         source = decrypted
     from openpyxl import load_workbook
     workbook = load_workbook(source, read_only=True, data_only=True)
+    sheets = [list(sheet.iter_rows(values_only=True)) for sheet in workbook.worksheets]
+    rows = max(sheets, key=lambda sheet: sum(any(cell not in (None, "") for cell in row) for row in sheet), default=[])
     output = io.StringIO(); writer = csv.writer(output)
-    writer.writerows(workbook.active.iter_rows(values_only=True))
+    writer.writerows(rows)
     return output.getvalue()
 
 def rows_from_csv(value: str) -> list[dict]:
-    rows = list(csv.reader(io.StringIO(value)))
+    rows = [row for row in csv.reader(io.StringIO(value)) if any(cell.strip() for cell in row)]
     if not rows: return []
-    headers = [cell.strip().lower() for cell in rows[0]]
-    has_headers = any(any(word in cell for word in ("date", "amount", "debit", "credit", "merchant", "description", "narration", "particular")) for cell in headers)
-    if has_headers:
+    header_index = next((index for index, row in enumerate(rows[:20]) if is_header(row)), None)
+    if header_index is not None:
+        headers = [cell.strip().lower() for cell in rows[header_index]]
         date_index = find_column(headers, ("transaction date", "txn date", "value date", "date"))
         debit_index = find_column(headers, ("debit", "withdrawal", "outflow"))
         credit_index = find_column(headers, ("credit", "deposit", "inflow"))
         amount_index = find_column(headers, ("amount", "transaction amount"))
         merchant_index = find_column(headers, ("merchant", "description", "narration", "particular", "details"))
-        rows = rows[1:]
-    else:
-        date_index, debit_index, credit_index, amount_index, merchant_index = 0, None, None, 1, 2
+        return mapped_rows(rows[header_index + 1:], date_index, debit_index, credit_index, amount_index, merchant_index)
+    return inferred_rows(rows)
+
+def is_header(row: list[str]) -> bool:
+    cells = [cell.strip().lower() for cell in row]
+    has_date = any("date" in cell or "txn" in cell for cell in cells)
+    has_amount = any(any(word in cell for word in ("amount", "debit", "credit", "withdraw", "deposit", "balance")) for cell in cells)
+    return has_date and has_amount
+
+def mapped_rows(rows: list[list[str]], date_index: int | None, debit_index: int | None, credit_index: int | None, amount_index: int | None, merchant_index: int | None) -> list[dict]:
     result = []
     for row in rows:
-        date = normalize_date(row[date_index]) if date_index is not None and date_index < len(row) else None
-        if not date:
-            continue
+        date = normalize_date(row[date_index]) if date_index is not None and date_index < len(row) else first_date(row)
+        if not date: continue
         if debit_index is not None or credit_index is not None:
             debit = parse_amount(row[debit_index]) if debit_index is not None and debit_index < len(row) else 0
             credit = parse_amount(row[credit_index]) if credit_index is not None and credit_index < len(row) else 0
             amount = -abs(debit) if debit else abs(credit)
         else:
-            amount = parse_amount(row[amount_index]) if amount_index is not None and amount_index < len(row) else 0
-        merchant = row[merchant_index].strip() if merchant_index is not None and merchant_index < len(row) else ""
-        if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT:
-            result.append(transaction(date, amount, merchant))
+            amount = parse_amount(row[amount_index]) if amount_index is not None and amount_index < len(row) else first_amount(row)
+        merchant = row[merchant_index].strip() if merchant_index is not None and merchant_index < len(row) else first_text(row, date)
+        if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT: result.append(transaction(date, amount, merchant))
     return result
+
+def inferred_rows(rows: list[list[str]]) -> list[dict]:
+    result = []
+    for row in rows:
+        date = first_date(row)
+        amount = first_amount(row)
+        if date and amount: result.append(transaction(date, amount, first_text(row, date)))
+    return result
+
+def first_date(row: list[str]) -> str | None:
+    for cell in row:
+        date = normalize_date(cell)
+        if date: return date
+    return None
+
+def first_amount(row: list[str]) -> float:
+    for cell in row:
+        amount = parse_amount(cell)
+        if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT: return amount
+    return 0
+
+def first_text(row: list[str], date: str | None) -> str:
+    for cell in row:
+        text = cell.strip()
+        if text and normalize_date(text) != date and not parse_amount(text): return text
+    return ""
 
 def find_column(headers: list[str], names: tuple[str, ...]) -> int | None:
     for index, header in enumerate(headers):
@@ -126,7 +159,6 @@ def normalize_date(value: str) -> str | None:
         except ValueError: continue
     try:
         serial = float(text)
-        if 20_000 <= serial <= 80_000:
-            return (datetime(1899, 12, 30) + timedelta(days=serial)).date().isoformat()
+        if 20_000 <= serial <= 80_000: return (datetime(1899, 12, 30) + timedelta(days=serial)).date().isoformat()
     except ValueError: pass
     return None
