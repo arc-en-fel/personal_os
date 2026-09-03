@@ -3,7 +3,6 @@ import io
 import os
 import re
 from datetime import datetime, timedelta
-
 import msoffcrypto
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
@@ -38,7 +37,14 @@ def parse_statement(payload: ParseRequest, x_parser_token: str | None = Header(d
 def read_pdf(raw: bytes, password: str | None) -> str:
     reader = PdfReader(io.BytesIO(raw))
     if reader.is_encrypted and (not password or reader.decrypt(password.strip()) == 0): raise ValueError("The file could not be decrypted with this password")
-    return "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
+    text = "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
+    if text.strip(): return text
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+        images = convert_from_bytes(raw, dpi=220, userpw=password.strip() if password else None)
+        return "\n".join(pytesseract.image_to_string(image) for image in images)
+    except Exception as error: raise ValueError(f"PDF has no selectable text and OCR failed: {error}") from error
 
 def read_excel(raw: bytes, password: str | None) -> str:
     source = io.BytesIO(raw)
@@ -46,8 +52,7 @@ def read_excel(raw: bytes, password: str | None) -> str:
         decrypted = io.BytesIO(); office = msoffcrypto.OfficeFile(source); office.load_key(password=password.strip()); office.decrypt(decrypted); source = decrypted
     from openpyxl import load_workbook
     workbook = load_workbook(source, read_only=True, data_only=True); sheets = [list(sheet.iter_rows(values_only=True)) for sheet in workbook.worksheets]
-    rows = max(sheets, key=lambda sheet: sum(any(cell not in (None, "") for cell in row) for row in sheet), default=[])
-    output = io.StringIO(); csv.writer(output).writerows(rows); return output.getvalue()
+    rows = max(sheets, key=lambda sheet: sum(any(cell not in (None, "") for cell in row) for row in sheet), default=[]); output = io.StringIO(); csv.writer(output).writerows(rows); return output.getvalue()
 
 def rows_from_csv(value: str) -> list[dict]:
     rows = [row for row in csv.reader(io.StringIO(value)) if any(cell.strip() for cell in row)]
@@ -60,7 +65,6 @@ def rows_from_csv(value: str) -> list[dict]:
 
 def is_header(row: list[str]) -> bool:
     cells = [cell.strip().lower() for cell in row]; return any("date" in cell or "txn" in cell for cell in cells) and any(any(word in cell for word in ("amount", "debit", "credit", "withdraw", "deposit", "balance")) for cell in cells)
-
 def mapped_rows(rows: list[list[str]], date_index: int | None, debit_index: int | None, credit_index: int | None, amount_index: int | None, merchant_index: int | None) -> list[dict]:
     result = []
     for row in rows:
@@ -72,32 +76,27 @@ def mapped_rows(rows: list[list[str]], date_index: int | None, debit_index: int 
         merchant = row[merchant_index].strip() if merchant_index is not None and merchant_index < len(row) else first_text(row, date)
         if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT: result.append(transaction(date, amount, merchant))
     return result
-
 def inferred_rows(rows: list[list[str]]) -> list[dict]:
     result = []
     for row in rows:
         date = first_date(row); amount = first_amount(row)
         if date and amount: result.append(transaction(date, amount, first_text(row, date)))
     return result
-
 def first_date(row: list[str]) -> str | None:
     for cell in row:
         date = normalize_date(cell)
         if date: return date
     return None
-
 def first_amount(row: list[str]) -> float:
     for cell in row:
         amount = parse_amount(cell)
         if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT: return amount
     return 0
-
 def first_text(row: list[str], date: str | None) -> str:
     for cell in row:
         text = cell.strip()
         if text and normalize_date(text) != date and not parse_amount(text): return text
     return ""
-
 def find_column(headers: list[str], names: tuple[str, ...]) -> int | None:
     for index, header in enumerate(headers):
         if any(name in header for name in names): return index
@@ -106,24 +105,18 @@ def find_column(headers: list[str], names: tuple[str, ...]) -> int | None:
 def rows_from_text(value: str) -> list[dict]:
     raw_lines = [" ".join(line.split()) for line in value.splitlines() if line.strip()]
     table_start = next((i for i, line in enumerate(raw_lines) if "value date" in line.lower() and "debit" in line.lower() and "credit" in line.lower()), 0)
-    lines = raw_lines[table_start + 1:]
-    result = []; index = 0
+    lines = raw_lines[table_start + 1:]; result = []; index = 0
     while index < len(lines):
         date_match = DATE_RE.search(lines[index])
         if not date_match: index += 1; continue
         date_text = date_match.group(0); date = normalize_date(date_text); joined = " ".join(lines[index:index + 8]); without_dates = DATE_RE.sub(" ", joined)
-        decimal_amounts = [match for match in AMOUNT_RE.finditer(without_dates) if "." in match.group(0)]
-        amount_match = decimal_amounts[0] if decimal_amounts else None
+        decimal_amounts = [match for match in AMOUNT_RE.finditer(without_dates) if "." in match.group(0)]; amount_match = decimal_amounts[0] if decimal_amounts else None
         if amount_match and date:
-            amount = parse_amount(amount_match.group(0))
-            if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT:
-                merchant = without_dates[:amount_match.start()].strip(" -|:")
-                if merchant and not any(word in merchant.lower() for word in ("date", "amount", "balance", "debit", "credit")): result.append(transaction(date, amount, merchant))
+            amount = parse_amount(amount_match.group(0)); merchant = without_dates[:amount_match.start()].strip(" -|:")
+            if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT and merchant and not any(word in merchant.lower() for word in ("date", "amount", "balance", "debit", "credit")): result.append(transaction(date, amount, merchant))
         index += 1
     return result
-
 def transaction(date: str, amount: float, merchant: str | None) -> dict: return {"amount": abs(amount), "transaction_type": "expense" if amount < 0 else "income", "merchant": merchant or None, "transaction_date": date}
-
 def parse_amount(value: str) -> float:
     text = str(value).strip().lower()
     if not text: return 0
@@ -133,7 +126,6 @@ def parse_amount(value: str) -> float:
     try: number = float(clean or 0)
     except ValueError: return 0
     number = -abs(number) if negative else abs(number); return number if abs(number) <= MAX_TRANSACTION_AMOUNT else 0
-
 def normalize_date(value: str) -> str | None:
     text = str(value).strip()
     for pattern in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%y"):
