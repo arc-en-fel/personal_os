@@ -2,7 +2,7 @@ import csv
 import io
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import msoffcrypto
 from fastapi import FastAPI, Header, HTTPException
@@ -63,20 +63,29 @@ def rows_from_csv(value: str) -> list[dict]:
     rows = list(csv.reader(io.StringIO(value)))
     if not rows: return []
     headers = [cell.strip().lower() for cell in rows[0]]
-    has_headers = any(any(word in cell for word in ("date", "amount", "debit", "credit", "merchant", "description", "narration")) for cell in headers)
+    has_headers = any(any(word in cell for word in ("date", "amount", "debit", "credit", "merchant", "description", "narration", "particular")) for cell in headers)
     if has_headers:
-        date_index = find_column(headers, ("date", "transaction date", "value date"))
-        amount_index = find_column(headers, ("amount", "debit", "withdrawal", "credit", "deposit"))
-        merchant_index = find_column(headers, ("merchant", "description", "narration", "particular"))
+        date_index = find_column(headers, ("transaction date", "txn date", "value date", "date"))
+        debit_index = find_column(headers, ("debit", "withdrawal", "outflow"))
+        credit_index = find_column(headers, ("credit", "deposit", "inflow"))
+        amount_index = find_column(headers, ("amount", "transaction amount"))
+        merchant_index = find_column(headers, ("merchant", "description", "narration", "particular", "details"))
         rows = rows[1:]
     else:
-        date_index, amount_index, merchant_index = 0, 1, 2
+        date_index, debit_index, credit_index, amount_index, merchant_index = 0, None, None, 1, 2
     result = []
     for row in rows:
         date = normalize_date(row[date_index]) if date_index is not None and date_index < len(row) else None
-        amount = parse_amount(row[amount_index]) if amount_index is not None and amount_index < len(row) else 0
+        if not date:
+            continue
+        if debit_index is not None or credit_index is not None:
+            debit = parse_amount(row[debit_index]) if debit_index is not None and debit_index < len(row) else 0
+            credit = parse_amount(row[credit_index]) if credit_index is not None and credit_index < len(row) else 0
+            amount = -abs(debit) if debit else abs(credit)
+        else:
+            amount = parse_amount(row[amount_index]) if amount_index is not None and amount_index < len(row) else 0
         merchant = row[merchant_index].strip() if merchant_index is not None and merchant_index < len(row) else ""
-        if date and amount and abs(amount) <= MAX_TRANSACTION_AMOUNT:
+        if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT:
             result.append(transaction(date, amount, merchant))
     return result
 
@@ -98,7 +107,9 @@ def transaction(date: str, amount: float, merchant: str | None) -> dict:
     return {"amount": abs(amount), "transaction_type": "expense" if amount < 0 else "income", "merchant": merchant or None, "transaction_date": date}
 
 def parse_amount(value: str) -> float:
-    text = str(value).strip().lower(); negative = "-" in text or text.endswith("dr") or (text.startswith("(") and text.endswith(")"))
+    text = str(value).strip().lower()
+    if not text: return 0
+    negative = "-" in text or text.endswith("dr") or (text.startswith("(") and text.endswith(")"))
     clean = re.sub(r"[^0-9.,]", "", text).replace(",", "")
     if clean.count(".") > 1:
         last_separator = clean.rfind("."); decimal_part = clean[last_separator + 1:]
@@ -109,7 +120,13 @@ def parse_amount(value: str) -> float:
     return number if abs(number) <= MAX_TRANSACTION_AMOUNT else 0
 
 def normalize_date(value: str) -> str | None:
-    for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%y"):
-        try: return datetime.strptime(str(value).strip(), pattern).date().isoformat()
+    text = str(value).strip()
+    for pattern in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%y"):
+        try: return datetime.strptime(text, pattern).date().isoformat()
         except ValueError: continue
+    try:
+        serial = float(text)
+        if 20_000 <= serial <= 80_000:
+            return (datetime(1899, 12, 30) + timedelta(days=serial)).date().isoformat()
+    except ValueError: pass
     return None
