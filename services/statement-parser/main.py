@@ -54,8 +54,7 @@ def rows_from_csv(value: str) -> list[dict]:
     if not rows: return []
     header_index = next((index for index, row in enumerate(rows[:20]) if is_header(row)), None)
     if header_index is not None:
-        headers = [cell.strip().lower() for cell in rows[header_index]]
-        date_index = find_column(headers, ("transaction date", "txn date", "value date", "date")); debit_index = find_column(headers, ("debit", "withdrawal", "outflow")); credit_index = find_column(headers, ("credit", "deposit", "inflow")); amount_index = find_column(headers, ("amount", "transaction amount")); merchant_index = find_column(headers, ("merchant", "description", "narration", "particular", "details"))
+        headers = [cell.strip().lower() for cell in rows[header_index]]; date_index = find_column(headers, ("transaction date", "txn date", "value date", "date")); debit_index = find_column(headers, ("debit", "withdrawal", "outflow")); credit_index = find_column(headers, ("credit", "deposit", "inflow")); amount_index = find_column(headers, ("amount", "transaction amount")); merchant_index = find_column(headers, ("merchant", "description", "narration", "particular", "details"))
         return mapped_rows(rows[header_index + 1:], date_index, debit_index, credit_index, amount_index, merchant_index)
     return inferred_rows(rows)
 
@@ -105,17 +104,20 @@ def find_column(headers: list[str], names: tuple[str, ...]) -> int | None:
     return None
 
 def rows_from_text(value: str) -> list[dict]:
-    lines = [" ".join(line.split()) for line in value.splitlines() if line.strip()]
+    raw_lines = [" ".join(line.split()) for line in value.splitlines() if line.strip()]
+    table_start = next((i for i, line in enumerate(raw_lines) if "value date" in line.lower() and "debit" in line.lower() and "credit" in line.lower()), 0)
+    lines = raw_lines[table_start + 1:]
     result = []; index = 0
     while index < len(lines):
         date_match = DATE_RE.search(lines[index])
         if not date_match: index += 1; continue
-        date_text = date_match.group(0); date = normalize_date(date_text); window = lines[index:index + 3]; joined = " ".join(window)
-        without_date = joined.replace(date_text, " ", 1); amounts = list(AMOUNT_RE.finditer(without_date)); amount_match = amounts[0] if amounts else None
+        date_text = date_match.group(0); date = normalize_date(date_text); joined = " ".join(lines[index:index + 8]); without_dates = DATE_RE.sub(" ", joined)
+        decimal_amounts = [match for match in AMOUNT_RE.finditer(without_dates) if "." in match.group(0)]
+        amount_match = decimal_amounts[0] if decimal_amounts else None
         if amount_match and date:
             amount = parse_amount(amount_match.group(0))
             if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT:
-                merchant = without_date[:amount_match.start()].strip(" -|:")
+                merchant = without_dates[:amount_match.start()].strip(" -|:")
                 if merchant and not any(word in merchant.lower() for word in ("date", "amount", "balance", "debit", "credit")): result.append(transaction(date, amount, merchant))
         index += 1
     return result
