@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Personal OS",
+    "slug": "personal-os",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "personalos",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "plugins": ["expo-router", "expo-secure-store"],
+    "experiments": { "typedRoutes": true },
+    "ios": { "supportsTablet": true },
+    "android": { "adaptiveIcon": { "backgroundColor": "#F4F1EA" } }
+  }
+}

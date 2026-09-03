@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: personal-os-statement-parser
+    runtime: docker
+    dockerfilePath: ./services/statement-parser/Dockerfile
+    dockerContext: ./services/statement-parser
+    healthCheckPath: /health
+    envVars:
+      - key: STATEMENT_PARSER_TOKEN
+        generateValue: true
