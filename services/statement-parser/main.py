@@ -11,17 +11,14 @@ from pypdf import PdfReader
 
 app = FastAPI(title="Personal OS statement parser")
 
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
 
 class ParseRequest(BaseModel):
     filename: str
     base64: str
     password: str | None = None
-
 
 @app.post("/parse")
 def parse_statement(payload: ParseRequest, x_parser_token: str | None = Header(default=None)):
@@ -32,8 +29,7 @@ def parse_statement(payload: ParseRequest, x_parser_token: str | None = Header(d
         import base64
         raw = base64.b64decode(payload.base64)
         if payload.filename.lower().endswith(".pdf"):
-            text = read_pdf(raw, payload.password)
-            rows = rows_from_text(text)
+            rows = rows_from_text(read_pdf(raw, payload.password))
         elif payload.filename.lower().endswith((".xlsx", ".xls")):
             rows = rows_from_csv(read_excel(raw, payload.password))
         else:
@@ -42,77 +38,78 @@ def parse_statement(payload: ParseRequest, x_parser_token: str | None = Header(d
     except Exception as error:
         raise HTTPException(status_code=422, detail=f"Could not parse statement: {error}") from error
 
-
 def read_pdf(raw: bytes, password: str | None) -> str:
     reader = PdfReader(io.BytesIO(raw))
-    if reader.is_encrypted:
-        if not password or reader.decrypt(password) == 0:
-            raise ValueError("A valid PDF password is required")
+    if reader.is_encrypted and (not password or reader.decrypt(password.strip()) == 0):
+        raise ValueError("The file could not be decrypted with this password")
     return "\n".join(page.extract_text() or "" for page in reader.pages)
-
 
 def read_excel(raw: bytes, password: str | None) -> str:
     source = io.BytesIO(raw)
     if password:
         decrypted = io.BytesIO()
         office = msoffcrypto.OfficeFile(source)
-        office.load_key(password=password)
+        office.load_key(password=password.strip())
         office.decrypt(decrypted)
         source = decrypted
     from openpyxl import load_workbook
     workbook = load_workbook(source, read_only=True, data_only=True)
-    sheet = workbook.active
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerows(sheet.iter_rows(values_only=True))
+    output = io.StringIO(); writer = csv.writer(output)
+    writer.writerows(workbook.active.iter_rows(values_only=True))
     return output.getvalue()
-
 
 def rows_from_csv(value: str) -> list[dict]:
     rows = list(csv.reader(io.StringIO(value)))
-    if rows and not looks_like_date(rows[0][0] if rows[0] else ""):
+    if not rows: return []
+    headers = [cell.strip().lower() for cell in rows[0]]
+    has_headers = any(any(word in cell for word in ("date", "amount", "debit", "credit", "merchant", "description", "narration")) for cell in headers)
+    if has_headers:
+        date_index = find_column(headers, ("date", "transaction date", "value date"))
+        amount_index = find_column(headers, ("amount", "debit", "withdrawal", "credit", "deposit"))
+        merchant_index = find_column(headers, ("merchant", "description", "narration", "particular"))
         rows = rows[1:]
+    else:
+        date_index, amount_index, merchant_index = 0, 1, 2
     result = []
     for row in rows:
-        if len(row) < 2:
-            continue
-        date = normalize_date(row[0])
-        amount = parse_amount(row[1])
-        if date and amount:
-            result.append(transaction(date, amount, ", ".join(row[2:]).strip()))
+        date = normalize_date(row[date_index]) if date_index is not None and date_index < len(row) else None
+        amount = parse_amount(row[amount_index]) if amount_index is not None and amount_index < len(row) else 0
+        merchant = row[merchant_index].strip() if merchant_index is not None and merchant_index < len(row) else ""
+        if date and amount: result.append(transaction(date, amount, merchant))
     return result
 
+def find_column(headers: list[str], names: tuple[str, ...]) -> int | None:
+    for index, header in enumerate(headers):
+        if any(name in header for name in names): return index
+    return None
 
 def rows_from_text(value: str) -> list[dict]:
-    result = []
-    pattern = re.compile(r"(?P<date>\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?P<merchant>.+?)\s+(?P<amount>[+-]?[₹$€£]?\s?[\d,]+(?:\.\d{2})?)$")
+    result = []; pattern = re.compile(r"(?P<date>\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?P<merchant>.+?)\s+(?P<amount>[+-]?[₹$€£]?\s?[\d,]+(?:\.\d{2})?)$")
     for line in value.splitlines():
         match = pattern.search(" ".join(line.split()))
         if match:
             date = normalize_date(match.group("date")); amount = parse_amount(match.group("amount"))
-            if date and amount:
-                result.append(transaction(date, amount, match.group("merchant")))
+            if date and amount: result.append(transaction(date, amount, match.group("merchant")))
     return result
-
 
 def transaction(date: str, amount: float, merchant: str | None) -> dict:
     return {"amount": abs(amount), "transaction_type": "expense" if amount < 0 else "income", "merchant": merchant or None, "transaction_date": date}
 
-
 def parse_amount(value: str) -> float:
-    negative = "-" in value or value.strip().lower().endswith("dr")
-    number = float(re.sub(r"[^0-9.]", "", value) or 0)
-    return -number if negative else number
-
+    text = value.strip().lower(); negative = "-" in text or text.endswith("dr") or (text.startswith("(") and text.endswith(")"))
+    clean = re.sub(r"[^0-9.,]", "", text).replace(",", "")
+    if clean.count(".") > 1:
+        last_separator = clean.rfind("."); decimal_part = clean[last_separator + 1:]
+        clean = clean[:last_separator].replace(".", "") + ("." + decimal_part if len(decimal_part) <= 2 else "")
+    try: number = float(clean or 0)
+    except ValueError: return 0
+    return -abs(number) if negative else abs(number)
 
 def looks_like_date(value: str) -> bool:
     return bool(re.match(r"^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$", value.strip()))
 
-
 def normalize_date(value: str) -> str | None:
     for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%y"):
-        try:
-            return datetime.strptime(value.strip(), pattern).date().isoformat()
-        except ValueError:
-            continue
+        try: return datetime.strptime(value.strip(), pattern).date().isoformat()
+        except ValueError: continue
     return None
