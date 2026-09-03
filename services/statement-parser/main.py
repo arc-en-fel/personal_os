@@ -38,15 +38,14 @@ def parse_statement(payload: ParseRequest, x_parser_token: str | None = Header(d
 def read_pdf(raw: bytes, password: str | None) -> str:
     reader = PdfReader(io.BytesIO(raw))
     if reader.is_encrypted and (not password or reader.decrypt(password.strip()) == 0): raise ValueError("The file could not be decrypted with this password")
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+    return "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
 
 def read_excel(raw: bytes, password: str | None) -> str:
     source = io.BytesIO(raw)
     if password:
         decrypted = io.BytesIO(); office = msoffcrypto.OfficeFile(source); office.load_key(password=password.strip()); office.decrypt(decrypted); source = decrypted
     from openpyxl import load_workbook
-    workbook = load_workbook(source, read_only=True, data_only=True)
-    sheets = [list(sheet.iter_rows(values_only=True)) for sheet in workbook.worksheets]
+    workbook = load_workbook(source, read_only=True, data_only=True); sheets = [list(sheet.iter_rows(values_only=True)) for sheet in workbook.worksheets]
     rows = max(sheets, key=lambda sheet: sum(any(cell not in (None, "") for cell in row) for row in sheet), default=[])
     output = io.StringIO(); csv.writer(output).writerows(rows); return output.getvalue()
 
@@ -111,15 +110,14 @@ def rows_from_text(value: str) -> list[dict]:
     while index < len(lines):
         date_match = DATE_RE.search(lines[index])
         if not date_match: index += 1; continue
-        date = normalize_date(date_match.group(0)); window = lines[index:index + 3]; joined = " ".join(window)
-        amounts = list(AMOUNT_RE.finditer(joined)); amount_match = amounts[-1] if amounts else None
+        date_text = date_match.group(0); date = normalize_date(date_text); window = lines[index:index + 3]; joined = " ".join(window)
+        without_date = joined.replace(date_text, " ", 1); amounts = list(AMOUNT_RE.finditer(without_date)); amount_match = amounts[0] if amounts else None
         if amount_match and date:
             amount = parse_amount(amount_match.group(0))
             if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT:
-                merchant = joined[:amount_match.start()].replace(date_match.group(0), "").strip(" -|:")
+                merchant = without_date[:amount_match.start()].strip(" -|:")
                 if merchant and not any(word in merchant.lower() for word in ("date", "amount", "balance", "debit", "credit")): result.append(transaction(date, amount, merchant))
-            index += 1
-        else: index += 1
+        index += 1
     return result
 
 def transaction(date: str, amount: float, merchant: str | None) -> dict: return {"amount": abs(amount), "transaction_type": "expense" if amount < 0 else "income", "merchant": merchant or None, "transaction_date": date}
