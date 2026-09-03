@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from pypdf import PdfReader
 
 app = FastAPI(title="Personal OS statement parser")
+MAX_TRANSACTION_AMOUNT = 9_999_999_999.99
 
 @app.get("/health")
 def health():
@@ -75,7 +76,8 @@ def rows_from_csv(value: str) -> list[dict]:
         date = normalize_date(row[date_index]) if date_index is not None and date_index < len(row) else None
         amount = parse_amount(row[amount_index]) if amount_index is not None and amount_index < len(row) else 0
         merchant = row[merchant_index].strip() if merchant_index is not None and merchant_index < len(row) else ""
-        if date and amount: result.append(transaction(date, amount, merchant))
+        if date and amount and abs(amount) <= MAX_TRANSACTION_AMOUNT:
+            result.append(transaction(date, amount, merchant))
     return result
 
 def find_column(headers: list[str], names: tuple[str, ...]) -> int | None:
@@ -96,20 +98,18 @@ def transaction(date: str, amount: float, merchant: str | None) -> dict:
     return {"amount": abs(amount), "transaction_type": "expense" if amount < 0 else "income", "merchant": merchant or None, "transaction_date": date}
 
 def parse_amount(value: str) -> float:
-    text = value.strip().lower(); negative = "-" in text or text.endswith("dr") or (text.startswith("(") and text.endswith(")"))
+    text = str(value).strip().lower(); negative = "-" in text or text.endswith("dr") or (text.startswith("(") and text.endswith(")"))
     clean = re.sub(r"[^0-9.,]", "", text).replace(",", "")
     if clean.count(".") > 1:
         last_separator = clean.rfind("."); decimal_part = clean[last_separator + 1:]
         clean = clean[:last_separator].replace(".", "") + ("." + decimal_part if len(decimal_part) <= 2 else "")
     try: number = float(clean or 0)
     except ValueError: return 0
-    return -abs(number) if negative else abs(number)
-
-def looks_like_date(value: str) -> bool:
-    return bool(re.match(r"^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$", value.strip()))
+    number = -abs(number) if negative else abs(number)
+    return number if abs(number) <= MAX_TRANSACTION_AMOUNT else 0
 
 def normalize_date(value: str) -> str | None:
     for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%y"):
-        try: return datetime.strptime(value.strip(), pattern).date().isoformat()
+        try: return datetime.strptime(str(value).strip(), pattern).date().isoformat()
         except ValueError: continue
     return None
