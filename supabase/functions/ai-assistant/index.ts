@@ -1,49 +1,35 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
+const tools = [
+  { type: 'function', name: 'activity_summary', description: 'Read the user activity record for recent days.', parameters: { type: 'object', properties: { days: { type: 'number', minimum: 1, maximum: 90 } }, required: ['days'], additionalProperties: false }, strict: true },
+  { type: 'function', name: 'finance_summary', description: 'Read income, spending, net, and category totals for recent days.', parameters: { type: 'object', properties: { days: { type: 'number', minimum: 1, maximum: 90 } }, required: ['days'], additionalProperties: false }, strict: true },
+  { type: 'function', name: 'search_notes', description: 'Search the user knowledge base for relevant notes.', parameters: { type: 'object', properties: { query: { type: 'string', minLength: 1, maxLength: 500 } }, required: ['query'], additionalProperties: false }, strict: true },
+];
+type ToolCall = { type: 'function_call'; call_id: string; name: string; arguments: string };
 
-Deno.serve(async (request) => {
+Deno.serve(async request => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
-    const authHeader = request.headers.get('Authorization');
-    const token = authHeader?.replace('Bearer ', '');
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
-    const openAiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!token || !supabaseUrl || !supabaseAnonKey) return json({ error: 'Authentication is required.' }, 401);
-    if (!openAiKey) return json({ error: 'The AI service is not configured.' }, 503);
-
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: `Bearer ${token}` } } });
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-    if (userError || !user) return json({ error: 'Authentication is required.' }, 401);
-    const body = await request.json() as { message?: string };
-    const message = body.message?.trim();
-    if (!message) return json({ error: 'A message is required.' }, 400);
-
-    const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
-    const [{ data: activities }, { data: goals }, { data: projects }, { data: transactions }] = await Promise.all([
-      supabase.from('activities').select('type,title,description,metadata,started_at').eq('user_id', user.id).gte('started_at', weekAgo.toISOString()).order('started_at', { ascending: false }).limit(50),
-      supabase.from('goals').select('title,current_value,target_value,status').eq('user_id', user.id).eq('status', 'active').limit(20),
-      supabase.from('projects').select('name,status,progress').eq('user_id', user.id).eq('status', 'active').limit(20),
-      supabase.from('transactions').select('amount,transaction_type,merchant,transaction_date').eq('user_id', user.id).gte('transaction_date', weekAgo.toISOString().slice(0, 10)).limit(50),
-    ]);
-
-    const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'text-embedding-3-small', input: message }) });
-    let relevantNotes: { title: string; content: string; similarity: number }[] = [];
-    if (embeddingResponse.ok) {
-      const embeddingResult = await embeddingResponse.json() as { data?: { embedding: number[] }[] };
-      const queryEmbedding = embeddingResult.data?.[0]?.embedding;
-      if (queryEmbedding) {
-        const { data: notes } = await supabase.rpc('match_notes', { query_embedding: queryEmbedding, match_threshold: 0.72, match_count: 5, requesting_user_id: user.id });
-        relevantNotes = notes ?? [];
-      }
+    const token = request.headers.get('Authorization')?.replace('Bearer ', ''); const url = Deno.env.get('SUPABASE_URL'); const anonKey = Deno.env.get('SUPABASE_ANON_KEY'); const openAiKey = Deno.env.get('OPENAI_API_KEY');
+    if (!token || !url || !anonKey) return json({ error: 'Authentication is required.' }, 401); if (!openAiKey) return json({ error: 'The AI service is not configured.' }, 503);
+    const supabase = createClient(url, anonKey, { global: { headers: { Authorization: `Bearer ${token}` } } }); const { data: { user } } = await supabase.auth.getUser(token); if (!user) return json({ error: 'Authentication is required.' }, 401);
+    const body = await request.json() as { message?: string }; const message = body.message?.trim(); if (!message || message.length > 2000) return json({ error: 'Message must be between 1 and 2000 characters.' }, 400);
+    const input: unknown[] = [{ role: 'user', content: message }];
+    for (let turn = 0; turn < 4; turn += 1) {
+      const response = await askOpenAI(openAiKey, input); if (!response.ok) return json({ error: 'The AI service could not answer right now.' }, 502);
+      const result = await response.json() as { output?: unknown[]; output_text?: string }; const calls = (result.output ?? []).filter((item): item is ToolCall => typeof item === 'object' && item !== null && (item as ToolCall).type === 'function_call');
+      if (!calls.length) return json({ answer: result.output_text ?? 'I could not produce an answer from your records.' }); input.push(...(result.output ?? []));
+      for (const call of calls) input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(await runTool(supabase, user.id, openAiKey, call.name, call.arguments)) });
     }
-    const context = JSON.stringify({ period: 'last 7 days', activities: activities ?? [], active_goals: goals ?? [], active_projects: projects ?? [], transactions: transactions ?? [], relevant_notes: relevantNotes });
-    const openAiResponse = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: Deno.env.get('OPENAI_MODEL') ?? 'gpt-5', store: false, instructions: 'You are the Personal OS assistant. Answer only from the supplied personal data context. If the context does not contain the answer, say so clearly. Be concise and practical. Never claim you performed an action.', input: `Personal data context:\n${context}\n\nUser question:\n${message}` }) });
-    if (!openAiResponse.ok) return json({ error: 'The AI service could not answer right now.' }, 502);
-    const result = await openAiResponse.json() as { output_text?: string };
-    return json({ answer: result.output_text ?? 'I could not produce an answer from the available data.' });
-  } catch { return json({ error: 'Unexpected assistant error.' }, 500); }
+    return json({ answer: 'I could not finish that request within the safe tool limit.' }, 502);
+  } catch (error) { console.error(error); return json({ error: 'Unexpected assistant error.' }, 500); }
 });
 
-function json(body: Record<string, string>, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }); }
+async function askOpenAI(key: string, input: unknown[]) { return fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: Deno.env.get('OPENAI_MODEL') ?? 'gpt-5', store: false, tools, instructions: 'You are Personal OS. Use tools to retrieve facts before answering. Answer only from tool results and say when data is unavailable. Be concise and practical. Never invent values. You cannot write or delete records.', input }) }); }
+async function runTool(supabase: ReturnType<typeof createClient>, userId: string, openAiKey: string, name: string, raw: string) { let args: { days?: number; query?: string }; try { args = JSON.parse(raw) as { days?: number; query?: string }; } catch { return { error: 'Invalid tool arguments.' }; } if (name === 'activity_summary') return activitySummary(supabase, userId, clampDays(args.days)); if (name === 'finance_summary') return financeSummary(supabase, userId, clampDays(args.days)); if (name === 'search_notes') return searchNotes(supabase, userId, openAiKey, args.query?.trim().slice(0, 500) ?? ''); return { error: 'Unknown tool.' }; }
+function clampDays(value?: number) { return Math.min(Math.max(Math.floor(value ?? 7), 1), 90); }
+async function activitySummary(supabase: ReturnType<typeof createClient>, userId: string, days: number) { const start = new Date(); start.setDate(start.getDate() - days); const { data, error } = await supabase.from('activities').select('type,title,description,metadata,started_at').eq('user_id', userId).gte('started_at', start.toISOString()).order('started_at', { ascending: false }).limit(100); if (error) return { error: 'Activity data is unavailable.' }; const byType: Record<string, number> = {}; for (const row of data ?? []) byType[row.type] = (byType[row.type] ?? 0) + 1; return { days, count: data?.length ?? 0, by_type: byType, recent: (data ?? []).slice(0, 20) }; }
+async function financeSummary(supabase: ReturnType<typeof createClient>, userId: string, days: number) { const start = new Date(); start.setDate(start.getDate() - days); const { data, error } = await supabase.from('transactions').select('amount,transaction_type,merchant,transaction_date,category:transaction_categories(name)').eq('user_id', userId).gte('transaction_date', start.toISOString().slice(0, 10)).limit(500); if (error) return { error: 'Finance data is unavailable.' }; let income = 0; let spending = 0; const byCategory: Record<string, number> = {}; for (const row of data ?? []) { const amount = Number(row.amount) || 0; if (row.transaction_type === 'income') income += amount; else { spending += amount; const category = (row.category as { name?: string }[] | null)?.[0]?.name ?? 'Other'; byCategory[category] = (byCategory[category] ?? 0) + amount; } } return { days, transaction_count: data?.length ?? 0, income, spending, net: income - spending, spending_by_category: byCategory }; }
+async function searchNotes(supabase: ReturnType<typeof createClient>, userId: string, key: string, query: string) { if (!query) return { error: 'A search query is required.' }; const response = await fetch('https://api.openai.com/v1/embeddings', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'text-embedding-3-small', input: query }) }); if (!response.ok) return { error: 'Knowledge search is unavailable.' }; const embedding = (await response.json() as { data?: { embedding: number[] }[] }).data?.[0]?.embedding; if (!embedding) return { error: 'Knowledge search returned no results.' }; const { data, error } = await supabase.rpc('match_notes', { query_embedding: embedding, match_threshold: 0.65, match_count: 5, requesting_user_id: userId }); return error ? { error: 'Knowledge search is unavailable.' } : { results: data ?? [] }; }
+function json(body: Record<string, unknown>, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }); }
