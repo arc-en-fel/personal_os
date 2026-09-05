@@ -112,7 +112,8 @@ def rows_from_text(value: str) -> list[dict]:
         date_text = date_match.group(0); date = normalize_date(date_text); joined = " ".join(lines[index:index + 8]); without_dates = DATE_RE.sub(" ", joined)
         decimal_amounts = [match for match in AMOUNT_RE.finditer(without_dates) if "." in match.group(0)]; amount_match = decimal_amounts[0] if decimal_amounts else None
         if amount_match and date:
-            amount = parse_amount(amount_match.group(0)); merchant = without_dates[:amount_match.start()].strip(" -|:")
+            amount = parse_amount(amount_match.group(0)); merchant = without_dates[:amount_match.start()].strip(" -|:"); narration = merchant.lower()
+            if re.search(r"\b(?:wdl|dr|debit|withdraw|withdrawal)\b", narration): amount = -abs(amount)
             if amount and abs(amount) <= MAX_TRANSACTION_AMOUNT and merchant and not any(word in merchant.lower() for word in ("date", "amount", "balance", "debit", "credit")): result.append(transaction(date, amount, merchant))
         index += 1
     return result
