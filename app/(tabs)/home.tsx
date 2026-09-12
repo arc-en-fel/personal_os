@@ -18,6 +18,13 @@ function getGreeting(): string {
   return 'Good night.';
 }
 
+/**
+ * Get title text based on current session
+ */
+function getTitleText(): string {
+  return 'Personal Tracker - OTA Test';
+}
+
 export default function HomeScreen() {
   const { session, signOut } = useAuth();
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -54,7 +61,7 @@ export default function HomeScreen() {
     <View style={styles.header}>
       <View>
         <Text style={styles.kicker}>YOUR DAY</Text>
-        <Text style={styles.title}>{greeting}</Text>
+        <Text style={styles.title}>{getTitleText()}</Text>
       </View>
       <Pressable onPress={() => void signOut()}>
         <Text style={styles.signOut}>Sign out</Text>
