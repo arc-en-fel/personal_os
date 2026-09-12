@@ -21,7 +21,9 @@ jobs:
           cache: npm
 
       - name: Verify Node version
-        run: node --version && npm --version
+        run: |
+          node --version
+          npm --version
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps --no-audit --no-fund
@@ -29,15 +31,21 @@ jobs:
       - name: Install EAS CLI
         run: npm install -g eas-cli
 
-      - name: Initialize EAS project
-        run: eas init --account deepak_bhaskaran --non-interactive || echo "Project already configured"
+      - name: Verify Expo token
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "ERROR: EXPO_TOKEN is not set!"
+            exit 1
+          else
+            echo "EXPO_TOKEN is set"
+          fi
         env:
-          EXPO_TOKEN: ${{ secrets.EAS_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Build Android APK
         run: eas build --platform android --non-interactive
         env:
-          EXPO_TOKEN: ${{ secrets.EAS_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EAS_BUILD_NO_EXPO_GO_WARNING: true
@@ -46,14 +54,18 @@ jobs:
         run: |
           BUILD_ID=$(eas build:list --limit 1 --json | jq -r '.[0].id')
           echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"
+          echo "Build ID: $BUILD_ID"
         env:
-          EXPO_TOKEN: ${{ secrets.EAS_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Download APK
         run: |
-          eas build:download --id "$BUILD_ID" --path ./app.apk --non-interactive
+          eas build:download \
+            --id "$BUILD_ID" \
+            --path ./app.apk \
+            --non-interactive
         env:
-          EXPO_TOKEN: ${{ secrets.EAS_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Release APK on GitHub
         uses: softprops/action-gh-release@v2
@@ -64,12 +76,14 @@ jobs:
             # Personal Tracker v${{ github.ref_name }}
 
             ## Installation
+
             1. Download `app.apk` below
-            2. Transfer to Android phone
+            2. Transfer it to your Android phone
             3. Enable "Install unknown apps" if needed
-            4. Open APK and install
+            4. Open the APK and install
 
             ## Features
+
             ✓ Calendar with reminders
             ✓ Finance tracking
             ✓ Project management
