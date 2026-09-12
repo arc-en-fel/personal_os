@@ -9,56 +9,58 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Setup Node.js 20
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+          sudo apt-get install -y nodejs
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps --no-audit
+      - name: Verify Node version
+        run: node --version && npm --version
+
+      - name: Install dependencies with npm
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Install EAS CLI
         run: npm install -g eas-cli
 
-      - name: Build APK with EAS
+      - name: Build Android APK
         run: eas build --platform android --non-interactive
         env:
           EAS_TOKEN: ${{ secrets.EAS_TOKEN }}
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
 
-      - name: Download APK
+      - name: Download APK artifact
         run: |
           BUILD_ID=$(eas build:list --limit 1 --json | jq -r '.[0].id')
-          echo "Build ID: $BUILD_ID"
+          echo "Downloading build: $BUILD_ID"
           eas build:download --id "$BUILD_ID" --path ./app.apk --non-interactive
 
-      - name: Create GitHub Release
+      - name: Release on GitHub
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: ./app.apk
           body: |
-            ## Personal Tracker v${{ github.ref_name }}
+            # Personal Tracker v${{ github.ref_name }}
             
-            ### Installation
-            1. Download `app.apk` from assets
+            ## Installation
+            1. Download `app.apk` below
             2. Transfer to Android phone
-            3. Settings → Apps & notifications → Install unknown apps → Enable
-            4. Open APK and tap Install
+            3. Settings → Apps → Install unknown apps → Enable for file manager
+            4. Open file manager, find APK, tap Install
             
-            ### Features
-            - Calendar with reminders
-            - Finance tracking
-            - Project management
-            - Goals & learning
-            - Nutrition logging
+            ## Features
+            ✓ Calendar with reminders  
+            ✓ Finance tracking  
+            ✓ Project management  
+            ✓ Goals & learning  
+            ✓ Nutrition logging  
             
-            No laptop needed - runs on Railway backend!
-          draft: false
-          prerelease: false
+            **Powered by Railway backend** (always running, no laptop needed!)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
