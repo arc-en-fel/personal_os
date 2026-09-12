@@ -35,6 +35,8 @@ jobs:
           else
             echo "✓ EXPO_TOKEN is set (length: ${#EXPO_TOKEN})"
           fi
+        env:
+          EXPO_TOKEN: ${{ secrets.EAS_TOKEN }}
 
       - name: Build Android APK
         run: eas build --platform android --non-interactive
