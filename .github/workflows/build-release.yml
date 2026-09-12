@@ -27,6 +27,15 @@ jobs:
       - name: Install EAS CLI
         run: npm install -g eas-cli
 
+      - name: Verify secrets are set
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "ERROR: EXPO_TOKEN is not set!"
+            exit 1
+          else
+            echo "✓ EXPO_TOKEN is set (length: ${#EXPO_TOKEN})"
+          fi
+
       - name: Build Android APK
         run: eas build --platform android --non-interactive
         env:
