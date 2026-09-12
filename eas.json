@@ -7,10 +7,25 @@
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "@EXPO_PUBLIC_SUPABASE_URL",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "@EXPO_PUBLIC_SUPABASE_ANON_KEY"
       }
     }
   },
   "submit": {
     "production": {}
+  },
+  "update": {
+    "url": "https://u.expo.dev/7714932c-6dfa-4bcc-87f4-bc0b0b6ae2ce"
+  },
+  "channels": {
+    "production": {
+      "published": true
+    },
+    "preview": {
+      "published": true
+    }
   }
 }

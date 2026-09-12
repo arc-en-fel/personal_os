@@ -7,6 +7,15 @@
     "scheme": "personalos",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/7714932c-6dfa-4bcc-87f4-bc0b0b6ae2ce",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 30000
+    },
     "plugins": [
       "expo-router",
       "expo-secure-store"
