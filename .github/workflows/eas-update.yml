@@ -62,8 +62,7 @@ jobs:
           eas update \
             --platform android \
             --channel production \
-            --message "OTA Update from GitHub Actions" \
-            --auto
+            --message "OTA Update from GitHub Actions"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}

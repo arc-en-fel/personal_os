@@ -58,12 +58,12 @@ Native Changes:
   - `fallbackToCacheTimeout`: 30000ms - wait 30s for update server, then use cached version
 
 ### eas.json
-- `channels`:
-  - `production`: OTA updates published here for the production APK
-  - `preview`: Optional testing channel
+- `build.production.channel`: "production"
+  - Specifies which EAS Update channel this APK will receive updates from
+  - Sets the `expo-channel-name` request header when checking for updates
 
 - `build.production.android`:
-  - Configured to receive OTA updates from the production channel
+  - Configured with buildType "apk" for Android APK builds
 
 ### src/lib/updateService.ts
 - `checkForUpdates()`: Checks for available updates (called automatically at startup)
