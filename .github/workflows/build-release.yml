@@ -3,7 +3,7 @@ name: Build & Release APK
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -11,76 +11,113 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Get the source code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      # 2. Use Node.js 22
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
+      # 3. Verify Node/npm
       - name: Verify Node version
         run: |
           node --version
           npm --version
 
+      # 4. Install exact dependencies from package-lock.json
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps --no-audit --no-fund
+        run: npm ci --include=dev --legacy-peer-deps --no-audit --no-fund
 
+      # 5. Install EAS CLI
       - name: Install EAS CLI
-        run: npm install -g eas-cli
+        run: npm install --global eas-cli
 
+      # 6. Verify Expo authentication
       - name: Verify Expo token
         run: |
           if [ -z "$EXPO_TOKEN" ]; then
             echo "ERROR: EXPO_TOKEN is not set!"
             exit 1
-          else
-            echo "EXPO_TOKEN is set"
           fi
+
+          echo "EXPO_TOKEN is set"
+          eas whoami
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
+      # 7. Build Android APK using EAS
       - name: Build Android APK
-        run: eas build --platform android --non-interactive
+        run: |
+          eas build \
+            --platform android \
+            --profile production \
+            --non-interactive \
+            --wait
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
-          EAS_BUILD_NO_EXPO_GO_WARNING: true
+          EAS_BUILD_NO_EXPO_GO_WARNING: "true"
 
+      # 8. Get the most recent EAS build ID
       - name: Get EAS build ID
         run: |
-          BUILD_ID=$(eas build:list --limit 1 --json | jq -r '.[0].id')
+          BUILD_ID=$(eas build:list --platform android --limit 1 --json | jq -r '.[0].id')
+
+          if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
+            echo "ERROR: Could not find EAS build ID"
+            exit 1
+          fi
+
           echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"
-          echo "Build ID: $BUILD_ID"
+          echo "EAS Build ID: $BUILD_ID"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
+      # 9. Download the APK
       - name: Download APK
         run: |
           eas build:download \
-            --id "$BUILD_ID" \
-            --path ./app.apk \
+            --build-id "$BUILD_ID" \
             --non-interactive
+
+          echo "Searching for APK..."
+
+          APK=$(find . -type f -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not downloaded"
+            find . -type f | head -n 100
+            exit 1
+          fi
+
+          echo "APK found: $APK"
+          cp "$APK" ./app.apk
+
+          echo "Final APK:"
+          ls -lh ./app.apk
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
+      # 10. Create GitHub Release when triggered by a version tag
       - name: Release APK on GitHub
-        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
           files: ./app.apk
           body: |
-            # Personal Tracker v${{ github.ref_name }}
+            # Personal Tracker ${{ github.ref_name }}
 
             ## Installation
 
-            1. Download `app.apk` below
-            2. Transfer it to your Android phone
-            3. Enable "Install unknown apps" if needed
-            4. Open the APK and install
+            1. Download `app.apk`.
+            2. Transfer it to your Android phone.
+            3. Enable "Install unknown apps" if Android asks.
+            4. Open the APK and install it.
 
             ## Features
 
