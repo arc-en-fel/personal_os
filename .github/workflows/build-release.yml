@@ -9,24 +9,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Clear old npm cache
-        run: rm -rf node_modules ~/.npm
 
       - name: Verify Node version
         run: node --version && npm --version
 
+      - name: Delete old lock file and caches
+        run: |
+          rm -f package-lock.json
+          npm cache clean --force
+
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps --no-audit --no-fund
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Install EAS CLI
         run: npm install -g eas-cli
@@ -51,20 +47,20 @@ jobs:
           files: ./app.apk
           body: |
             # Personal Tracker v${{ github.ref_name }}
-
+            
             ## Installation
             1. Download `app.apk` below
             2. Transfer to Android phone
             3. Settings → Apps → Install unknown apps → Enable for file manager
             4. Open file manager, find APK, tap Install
-
+            
             ## Features
-            ✓ Calendar with reminders
-            ✓ Finance tracking
-            ✓ Project management
-            ✓ Goals & learning
-            ✓ Nutrition logging
-
+            ✓ Calendar with reminders  
+            ✓ Finance tracking  
+            ✓ Project management  
+            ✓ Goals & learning  
+            ✓ Nutrition logging  
+            
             **Powered by Railway backend** (always running, no laptop needed!)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
