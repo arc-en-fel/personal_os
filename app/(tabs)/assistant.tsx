@@ -4,10 +4,46 @@ import { useAuth } from '@/src/providers/AuthProvider';
 import { supabase } from '@/src/lib/supabase';
 import { colors, spacing } from '@/src/theme';
 type Message = { role: 'user' | 'assistant'; text: string };
+type ConversationContext = Array<{ role: string; content: string }>;
 
 export default function AssistantScreen() {
-  const { session } = useAuth(); const [messages, setMessages] = useState<Message[]>([]); const [input, setInput] = useState(''); const [busy, setBusy] = useState(false); const [pending, setPending] = useState<string | null>(null);
-  async function ask(message = input.trim(), confirmWrite = false) { if (!message || !session || busy) return; if (!confirmWrite) { setInput(''); setMessages(current => [...current, { role: 'user', text: message }]); } setBusy(true); const { data, error } = await supabase.functions.invoke('ai-assistant', { body: { message, confirm_write: confirmWrite } }); setBusy(false); if (error) { setMessages(current => [...current, { role: 'assistant', text: 'The assistant could not respond. Check that the Edge Function is deployed and configured.' }]); return; } setMessages(current => [...current, { role: 'assistant', text: data?.answer ?? 'No answer returned.' }]); setPending(data?.pending_confirmation ? message : null); }
-  return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.screen}><ScrollView contentContainerStyle={styles.content}><Text style={styles.kicker}>PERSONAL OS</Text><Text style={styles.title}>Ask your data</Text><Text style={styles.subtitle}>Answers use your records and notes. Writes always require confirmation.</Text>{messages.length === 0 && <View style={styles.prompt}><Text style={styles.promptTitle}>Try asking</Text><Text style={styles.promptText}>What have I focused on this week?</Text><Text style={styles.promptText}>How much did I spend this month?</Text><Text style={styles.promptText}>Log that I studied for 60 minutes</Text></View>}{messages.map((message, index) => <View key={`${message.role}-${index}`} style={[styles.bubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}><Text style={styles.role}>{message.role === 'user' ? 'YOU' : 'PERSONAL OS'}</Text><Text style={[styles.message, message.role === 'user' && styles.userText]}>{message.text}</Text></View>)}{pending && <View style={styles.confirmBox}><Text style={styles.confirmTitle}>Create this activity?</Text><Text style={styles.confirmBody}>{pending}</Text><View style={styles.confirmActions}><Pressable onPress={() => { setPending(null); void ask(pending, true); }} style={styles.confirm}><Text style={styles.confirmText}>Confirm</Text></Pressable><Pressable onPress={() => setPending(null)}><Text style={styles.cancel}>Cancel</Text></Pressable></View></View>}{busy && <View style={styles.loading}><ActivityIndicator color={colors.sageDark} /><Text style={styles.loadingText}>Reviewing your records...</Text></View>}</ScrollView><View style={styles.composer}><TextInput multiline placeholder="Ask a question..." placeholderTextColor={colors.muted} value={input} onChangeText={setInput} style={styles.input} /><Pressable disabled={!input.trim() || busy} onPress={() => void ask()} style={[styles.send, (!input.trim() || busy) && styles.disabled]}><Text style={styles.sendText}>Send</Text></Pressable></View></KeyboardAvoidingView>;
+  const { session } = useAuth(); 
+  const [messages, setMessages] = useState<Message[]>([]); 
+  const [input, setInput] = useState(''); 
+  const [busy, setBusy] = useState(false); 
+  const [pending, setPending] = useState<string | null>(null);
+  const [conversationContext, setConversationContext] = useState<ConversationContext>([]);
+  
+  async function ask(message = input.trim(), confirmWrite = false) { 
+    if (!message || !session || busy) return; 
+    if (!confirmWrite) { 
+      setInput(''); 
+      setMessages(current => [...current, { role: 'user', text: message }]); 
+    } 
+    setBusy(true); 
+    const { data, error } = await supabase.functions.invoke('ai-assistant', { 
+      body: { 
+        message, 
+        confirm_write: confirmWrite,
+        conversation_context: conversationContext
+      } 
+    }); 
+    setBusy(false); 
+    if (error) { 
+      setMessages(current => [...current, { role: 'assistant', text: 'The assistant could not respond. Check that the Edge Function is deployed and configured.' }]); 
+      return; 
+    } 
+    
+    setMessages(current => [...current, { role: 'assistant', text: data?.answer ?? 'No answer returned.' }]); 
+    
+    // Update conversation context for next turn
+    if (data?.conversation_context) {
+      setConversationContext(data.conversation_context);
+    }
+    
+    setPending(data?.pending_confirmation ? message : null); 
+  }
+  
+  return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.screen}><ScrollView contentContainerStyle={styles.content}><Text style={styles.kicker}>PERSONAL OS</Text><Text style={styles.title}>Ask your data</Text><Text style={styles.subtitle}>Answers use your records and notes. Writes always require confirmation.</Text>{messages.length === 0 && <View style={styles.prompt}><Text style={styles.promptTitle}>Try asking</Text><Text style={styles.promptText}>What should I focus on?</Text><Text style={styles.promptText}>How much did I spend this week?</Text><Text style={styles.promptText}>Compare my activity levels month-over-month</Text><Text style={styles.promptText}>What are my goals?</Text></View>}{messages.map((message, index) => <View key={`${message.role}-${index}`} style={[styles.bubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}><Text style={styles.role}>{message.role === 'user' ? 'YOU' : 'PERSONAL OS'}</Text><Text style={[styles.message, message.role === 'user' && styles.userText]}>{message.text}</Text></View>)}{pending && <View style={styles.confirmBox}><Text style={styles.confirmTitle}>Create this activity?</Text><Text style={styles.confirmBody}>{pending}</Text><View style={styles.confirmActions}><Pressable onPress={() => { setPending(null); void ask(pending, true); }} style={styles.confirm}><Text style={styles.confirmText}>Confirm</Text></Pressable><Pressable onPress={() => setPending(null)}><Text style={styles.cancel}>Cancel</Text></Pressable></View></View>}{busy && <View style={styles.loading}><ActivityIndicator color={colors.sageDark} /><Text style={styles.loadingText}>Reviewing your records...</Text></View>}</ScrollView><View style={styles.composer}><TextInput multiline placeholder="Ask a question..." placeholderTextColor={colors.muted} value={input} onChangeText={setInput} style={styles.input} /><Pressable disabled={!input.trim() || busy} onPress={() => void ask()} style={[styles.send, (!input.trim() || busy) && styles.disabled]}><Text style={styles.sendText}>Send</Text></Pressable></View></KeyboardAvoidingView>;
 }
 const styles = StyleSheet.create({ screen: { flex: 1, backgroundColor: colors.paper }, content: { padding: spacing.lg, paddingTop: 64, paddingBottom: 110 }, kicker: { color: colors.sageDark, fontSize: 12, fontWeight: '800', letterSpacing: 2 }, title: { color: colors.ink, fontSize: 34, fontWeight: '800', marginTop: 6 }, subtitle: { color: colors.muted, fontSize: 16, lineHeight: 23, marginBottom: spacing.lg, marginTop: spacing.sm }, prompt: { backgroundColor: '#DCE8D8', borderRadius: 16, padding: spacing.md }, promptTitle: { color: colors.ink, fontSize: 16, fontWeight: '800', marginBottom: spacing.sm }, promptText: { color: colors.sageDark, fontWeight: '700', lineHeight: 25 }, bubble: { borderRadius: 15, marginTop: spacing.md, padding: spacing.md }, userBubble: { alignSelf: 'flex-end', backgroundColor: colors.ink, maxWidth: '88%' }, assistantBubble: { alignSelf: 'flex-start', backgroundColor: colors.card, maxWidth: '94%' }, role: { color: colors.coral, fontSize: 10, fontWeight: '800', letterSpacing: 1 }, message: { color: colors.ink, fontSize: 16, lineHeight: 23, marginTop: 6 }, userText: { color: colors.card }, confirmBox: { backgroundColor: '#F2E9D5', borderRadius: 14, marginTop: spacing.md, padding: spacing.md }, confirmTitle: { color: colors.ink, fontSize: 16, fontWeight: '800' }, confirmBody: { color: colors.muted, lineHeight: 20, marginTop: 5 }, confirmActions: { alignItems: 'center', flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md }, confirm: { backgroundColor: colors.sageDark, borderRadius: 10, paddingHorizontal: spacing.md, paddingVertical: spacing.sm }, confirmText: { color: colors.card, fontWeight: '800' }, cancel: { color: colors.coral, fontWeight: '800' }, loading: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg }, loadingText: { color: colors.muted }, composer: { alignItems: 'flex-end', backgroundColor: colors.card, borderTopColor: colors.line, borderTopWidth: 1, flexDirection: 'row', gap: spacing.sm, padding: spacing.sm }, input: { backgroundColor: colors.paper, borderColor: colors.line, borderRadius: 12, borderWidth: 1, color: colors.ink, flex: 1, maxHeight: 90, padding: spacing.sm }, send: { backgroundColor: colors.ink, borderRadius: 11, paddingHorizontal: spacing.md, paddingVertical: spacing.sm }, disabled: { opacity: .45 }, sendText: { color: colors.card, fontWeight: '800' } });

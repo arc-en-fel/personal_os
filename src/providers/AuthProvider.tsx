@@ -1,6 +1,8 @@
 import { Session } from '@supabase/supabase-js';
 import { PropsWithChildren, createContext, useContext, useEffect, useState } from 'react';
 import { isSupabaseConfigured, supabase } from '@/src/lib/supabase';
+import { startReminderScheduler, stopReminderScheduler } from '@/src/lib/reminder-scheduler';
+import { configureNotificationHandler } from '@/src/lib/notification-service';
 
 type AuthContextValue = {
   session: Session | null;
@@ -18,16 +20,32 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Don't configure notifications at startup (prevents Expo Go warnings)
+    // Notifications will be configured when first reminder is scheduled
+    
     if (!isSupabaseConfigured) {
       setLoading(false);
       return;
     }
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
+      if (data.session?.user.id) {
+        startReminderScheduler(data.session.user.id);
+      }
       setLoading(false);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession));
-    return () => listener.subscription.unsubscribe();
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      if (nextSession?.user.id) {
+        startReminderScheduler(nextSession.user.id);
+      } else {
+        stopReminderScheduler();
+      }
+    });
+    return () => {
+      listener.subscription.unsubscribe();
+      stopReminderScheduler();
+    };
   }, []);
 
   const authAction = async (action: 'signIn' | 'signUp', email: string, password: string) => {

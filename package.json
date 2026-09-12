@@ -13,10 +13,12 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",
     "expo": "~54.0.0",
+    "expo-calendar": "^57.0.2",
     "expo-constants": "~18.0.0",
     "expo-document-picker": "^57.0.1",
     "expo-file-system": "^57.0.6",
     "expo-linking": "~8.0.0",
+    "expo-notifications": "^57.0.17",
     "expo-router": "~6.0.0",
     "expo-secure-store": "~15.0.0",
     "expo-sharing": "^57.0.17",
@@ -24,7 +26,8 @@
     "react-native": "0.81.4",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
-    "react-native-url-polyfill": "^2.0.0"
+    "react-native-url-polyfill": "^2.0.0",
+    "rrule": "^2.8.1"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",

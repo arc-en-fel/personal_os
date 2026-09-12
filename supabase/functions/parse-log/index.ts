@@ -13,10 +13,11 @@ Deno.serve(async (request) => {
     const body = await request.json() as { text?: string };
     const text = body.text?.trim();
     if (!text) return json({ error: 'Text is required.' }, 400);
-    const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: Deno.env.get('OPENAI_MODEL') ?? 'gpt-5', store: false, instructions: 'Extract loggable personal activities from the user text. Return only valid JSON with an activities array. Each item must have type, title, description, and metadata. Use types workout, learning, nutrition, project, finance, or general. Never invent missing numbers; use an empty metadata object when details are absent.', input: text }) });
+    const response = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini', messages: [{ role: 'system', content: 'You are a personal activity parser. Extract loggable activities from user text. Return ONLY a JSON object with an activities array. Each item must have: type (workout|learning|nutrition|project|finance|general), title (string), description (string|null), metadata (object). Never invent missing numbers.' }, { role: 'user', content: text }], temperature: 0.2 }) });
     if (!response.ok) return json({ error: 'The AI service could not parse this note.' }, 502);
-    const result = await response.json() as { output_text?: string };
-    const parsed = JSON.parse(result.output_text ?? '{"activities":[]}') as { activities?: unknown[] };
+    const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const content = result.choices?.[0]?.message?.content ?? '{}';
+    const parsed = JSON.parse(content) as { activities?: unknown[] };
     const activities = Array.isArray(parsed.activities) ? parsed.activities.slice(0, 10) : [];
     return new Response(JSON.stringify({ activities }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch { return json({ error: 'Could not parse the activity text.' }, 500); }
