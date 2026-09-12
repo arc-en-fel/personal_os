@@ -1,0 +1,91 @@
+name: Build & Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '11'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup EAS
+        run: npm install -g eas-cli
+
+      - name: Build APK with EAS
+        run: eas build --platform android --non-interactive
+        env:
+          EAS_TOKEN: ${{ secrets.EAS_TOKEN }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: Download APK
+        run: |
+          npm install -g jq
+          eas build:list --limit 1 --json > build.json
+          cat build.json
+          BUILD_ID=$(cat build.json | head -1 | jq -r '.id')
+          if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
+            echo "Build ID not found in response"
+            exit 1
+          fi
+          echo "Downloading build: $BUILD_ID"
+          eas build:download --id "$BUILD_ID" --path ./app.apk --non-interactive || true
+
+      - name: List generated files
+        run: ls -lah
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            ./app.apk
+          body: |
+            ## Personal Tracker Release
+            
+            **Version:** ${{ github.ref_name }}
+            
+            ### Installation
+            1. Download `app.apk` from the assets below
+            2. Transfer to your Android phone
+            3. Enable "Install from Unknown Sources" in Settings → Apps & notifications
+            4. Open the APK file and tap Install
+            
+            ### What's included
+            - Calendar with reminders
+            - Finance tracking
+            - Project management
+            - Goals & learning tracking
+            - Nutrition logging
+            
+            ### Backend Status
+            ✓ Running on Railway (always on)
+            ✓ Connected to Supabase
+            ✓ No laptop needed
+            
+            **App Version:** ${{ github.ref_name }}
+            **Built:** ${{ github.event.head_commit.timestamp }}
+            
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,15 @@
+# Railway deployment config
+# This tells Railway how to deploy your app
+
+[build]
+builder = "dockerfile"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyMaxRetries = 5
+restartPolicyWindowSeconds = 600
+
+[env]
+# Set these as Railway environment variables in the dashboard
+# EXPO_PUBLIC_SUPABASE_URL
+# EXPO_PUBLIC_SUPABASE_ANON_KEY
