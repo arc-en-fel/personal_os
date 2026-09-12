@@ -55,7 +55,7 @@ export default function HomeScreen() {
     <View style={styles.header}>
       <View>
         <Text style={styles.kicker}>YOUR DAY</Text>
-      
+        <Text style={styles.title}>{greeting}</Text>
       </View>
       <Pressable onPress={() => void signOut()}>
         <Text style={styles.signOut}>Sign out</Text>
