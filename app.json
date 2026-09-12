@@ -20,7 +20,8 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#F4F1EA"
-      }
+      },
+      "package": "com.deepak_bhaskaran.personalos"
     },
     "extra": {
       "router": {},
