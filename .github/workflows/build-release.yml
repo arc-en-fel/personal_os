@@ -18,6 +18,9 @@ jobs:
           curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
           sudo apt-get install -y nodejs
 
+      - name: Clear old npm cache
+        run: rm -rf node_modules package-lock.json ~/.npm ~/.npmrc ~/.npmignore
+
       - name: Verify Node version
         run: node --version && npm --version
 
