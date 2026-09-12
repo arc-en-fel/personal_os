@@ -111,11 +111,34 @@ export const scheduleNotification = async (
   triggerDate: Date
 ): Promise<string | null> => {
   try {
-    // expo-notifications is not available in Expo Go SDK 53+
-    // This will need a development build to function
-    console.log('Notifications scheduled (not available in Expo Go):', payload.title);
-    console.log('Would fire at:', triggerDate);
-    return `scheduled-${Date.now()}`;
+    const Notifications = await import('expo-notifications');
+    
+    // Calculate seconds until trigger
+    const now = new Date();
+    const secondsUntilTrigger = Math.max(1, Math.floor((triggerDate.getTime() - now.getTime()) / 1000));
+
+    console.log(`[scheduleNotification] Scheduling notification:`);
+    console.log(`  Title: ${payload.title}`);
+    console.log(`  Trigger time: ${triggerDate.toISOString()}`);
+    console.log(`  Current time: ${now.toISOString()}`);
+    console.log(`  Seconds until trigger: ${secondsUntilTrigger}`);
+
+    // Schedule the notification
+    const notificationId = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: payload.title,
+        body: payload.body,
+        data: payload.data || {},
+        sound: payload.sound !== false ? 'default' : undefined,
+        badge: payload.badge,
+      },
+      trigger: {
+        seconds: secondsUntilTrigger,
+      },
+    });
+
+    console.log(`[scheduleNotification] Successfully scheduled with ID: ${notificationId}`);
+    return notificationId;
   } catch (e) {
     console.error('Failed to schedule notification:', e);
     return null;

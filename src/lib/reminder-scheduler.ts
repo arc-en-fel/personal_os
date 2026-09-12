@@ -30,6 +30,8 @@ export const getPendingReminders = async (userId: string): Promise<ReminderRecor
   try {
     const now = new Date();
 
+    console.log(`[getPendingReminders] Current time: ${now.toISOString()}`);
+
     const { data, error } = await supabase
       .from('event_reminders')
       .select(`
@@ -46,7 +48,7 @@ export const getPendingReminders = async (userId: string): Promise<ReminderRecor
       `)
       .eq('user_id', userId)
       .eq('enabled', true)
-      .lte('scheduled_time', now.toISOString())
+      .gt('scheduled_time', now.toISOString())  // ← FIXED: Get reminders AFTER now (future)
       .order('scheduled_time', { ascending: true });
 
     if (error) {
@@ -54,6 +56,8 @@ export const getPendingReminders = async (userId: string): Promise<ReminderRecor
       return [];
     }
 
+    console.log(`[getPendingReminders] Found ${data?.length || 0} future reminders`);
+    
     return data || [];
   } catch (e) {
     console.log('Error fetching pending reminders:', e);
@@ -78,13 +82,27 @@ export const scheduleReminderNotification = async (
     const event = reminder.event as any;
     const eventTitle = event?.title || reminder.title;
     const triggerDate = new Date(reminder.scheduled_time);
+    const now = new Date();
+
+    // Diagnostic logs
+    console.log(`[scheduleReminderNotification] Diagnostic Info:`);
+    console.log(`  Current time: ${now.toISOString()}`);
+    console.log(`  Raw reminder timestamp: ${reminder.scheduled_time}`);
+    console.log(`  Parsed trigger date: ${triggerDate.toISOString()}`);
+    console.log(`  Milliseconds until trigger: ${triggerDate.getTime() - now.getTime()}`);
+
+    // VALIDATION: Skip if reminder is in the past
+    if (triggerDate <= now) {
+      console.log(`Reminder ${reminder.id} skipped - scheduled time is in the past (${triggerDate.toISOString()} <= ${now.toISOString()})`);
+      return false;
+    }
 
     // Schedule push notification
     if (reminder.notification_type === 'notification') {
       const notificationId = await scheduleNotification(
         {
           title: 'Reminder',
-          body: `${eventTitle} - ${new Date(reminder.scheduled_time).toLocaleTimeString()}`,
+          body: `${eventTitle} - ${triggerDate.toLocaleTimeString()}`,
           data: {
             reminderId: reminder.id,
             eventId: reminder.event_id,
@@ -98,12 +116,12 @@ export const scheduleReminderNotification = async (
       if (notificationId) {
         // Log delivery attempt
         await logNotificationDelivery(reminder.user_id, reminder.id, 'push', 'sent');
-        console.log(`Scheduled reminder ${reminder.id} for ${triggerDate}`);
+        console.log(`Scheduled reminder ${reminder.id} for ${triggerDate.toISOString()}`);
         return true;
       }
     } else if (reminder.notification_type === 'email') {
       // For email reminders, log as pending (would need backend service to send)
-      console.log(`Email reminder ${reminder.id} scheduled for ${triggerDate}`);
+      console.log(`Email reminder ${reminder.id} scheduled for ${triggerDate.toISOString()}`);
       return true;
     }
 
