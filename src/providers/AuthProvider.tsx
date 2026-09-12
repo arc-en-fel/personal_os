@@ -1,5 +1,6 @@
 import { Session } from '@supabase/supabase-js';
 import { PropsWithChildren, createContext, useContext, useEffect, useState } from 'react';
+import { router } from 'expo-router';
 import { isSupabaseConfigured, supabase } from '@/src/lib/supabase';
 import { startReminderScheduler, stopReminderScheduler } from '@/src/lib/reminder-scheduler';
 import { configureNotificationHandler } from '@/src/lib/notification-service';
@@ -86,7 +87,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     session, loading, configured: isSupabaseConfigured,
     signIn: (email, password) => authAction('signIn', email, password),
     signUp: (email, password) => authAction('signUp', email, password),
-    signOut: async () => { await supabase.auth.signOut(); },
+    signOut: async () => { 
+      await supabase.auth.signOut();
+      router.replace('/auth');
+    },
   }}>{children}</AuthContext.Provider>;
 }
 
