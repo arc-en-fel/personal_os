@@ -93,7 +93,13 @@ export const getPendingReminders = async (userId: string): Promise<ReminderRecor
       });
     }
 
-    // Now filter for pending
+    // Now filter for pending - log the exact query filters
+    console.log(`[getPendingReminders] Query filters:`);
+    console.log(`  - user_id = ${userId}`);
+    console.log(`  - enabled = true`);
+    console.log(`  - scheduled_time > ${now.toISOString()}`);
+    console.log(`  - notification_id = NULL`);
+
     const { data, error } = await supabase
       .from('event_reminders')
       .select(`
@@ -114,6 +120,11 @@ export const getPendingReminders = async (userId: string): Promise<ReminderRecor
       .gt('scheduled_time', now.toISOString())
       .is('notification_id', null)  // Only get reminders NOT yet scheduled
       .order('scheduled_time', { ascending: true });
+
+    if (error) {
+      console.error(`[getPendingReminders] Query error:`, error.message);
+      console.error(`[getPendingReminders] Error details:`, error);
+    }
 
     if (error) {
       console.error('[getPendingReminders] Filter query failed:', error.message);

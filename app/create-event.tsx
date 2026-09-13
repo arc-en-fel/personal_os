@@ -129,6 +129,13 @@ export default function CreateEventScreen() {
       if (reminderMinutes !== null) {
         const reminderScheduledTime = new Date(startDateTime.getTime() - reminderMinutes * 60 * 1000);
 
+        console.log(`[CreateEvent] Creating reminder:`);
+        console.log(`  Event start: ${startDateTime.toISOString()}`);
+        console.log(`  Minutes before: ${reminderMinutes}`);
+        console.log(`  Reminder scheduled time: ${reminderScheduledTime.toISOString()}`);
+        console.log(`  Current time: ${new Date().toISOString()}`);
+        console.log(`  Reminder in future? ${reminderScheduledTime > new Date()}`);
+
         // DUPLICATE PREVENTION: Check if a reminder already exists for this event with same timing
         console.log(`[CreateEvent] Checking for duplicate reminders for event ${eventData.id}`);
         const { data: existingReminders, error: checkError } = await supabase
