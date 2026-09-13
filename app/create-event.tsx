@@ -245,7 +245,12 @@ export default function CreateEventScreen() {
             <View style={styles.timePickerContainer}>
               <View style={styles.timeColumn}>
                 <Text style={styles.timeLabel}>Hour</Text>
-                <ScrollView style={styles.timeScroll} showsVerticalScrollIndicator={false}>
+                <ScrollView 
+                  style={styles.timeScroll} 
+                  scrollEventThrottle={16}
+                  showsVerticalScrollIndicator={true}
+                  nestedScrollEnabled={true}
+                >
                   {HOURS.map(h => (
                     <Pressable
                       key={h}
@@ -262,7 +267,12 @@ export default function CreateEventScreen() {
 
               <View style={styles.timeColumn}>
                 <Text style={styles.timeLabel}>Minute</Text>
-                <ScrollView style={styles.timeScroll} showsVerticalScrollIndicator={false}>
+                <ScrollView 
+                  style={styles.timeScroll} 
+                  scrollEventThrottle={16}
+                  showsVerticalScrollIndicator={true}
+                  nestedScrollEnabled={true}
+                >
                   {MINUTES.map(m => (
                     <Pressable
                       key={m}
@@ -415,7 +425,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 8,
     marginTop: spacing.md,
-    height: 200,
+    height: 240,
     overflow: 'hidden',
   },
   timeColumn: {
@@ -424,8 +434,8 @@ const styles = StyleSheet.create({
     borderRightColor: colors.line,
   },
   timeLabel: { textAlign: 'center', color: colors.muted, fontSize: 11, fontWeight: '800', paddingVertical: spacing.sm },
-  timeScroll: { flex: 1 },
-  timeOption: { paddingVertical: spacing.md, paddingHorizontal: spacing.sm, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.line },
+  timeScroll: { flex: 1, minHeight: 200 },
+  timeOption: { paddingVertical: spacing.md, paddingHorizontal: spacing.sm, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.line, height: 44 },
   timeOptionSelected: { backgroundColor: colors.coral },
   timeOptionText: { color: colors.muted, fontSize: 14, fontWeight: '600' },
   timeOptionTextSelected: { color: colors.card, fontWeight: '800' },
