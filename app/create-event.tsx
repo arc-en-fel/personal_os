@@ -3,6 +3,7 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleShee
 import { router } from 'expo-router';
 import { useAuth } from '@/src/providers/AuthProvider';
 import { supabase } from '@/src/lib/supabase';
+import { scheduleReminder } from '@/src/lib/notification-service';
 import { colors, spacing } from '@/src/theme';
 
 const DURATION_OPTIONS = [
@@ -133,7 +134,7 @@ export default function CreateEventScreen() {
       if (reminderMinutes !== null) {
         const reminderScheduledTime = new Date(startDateTime.getTime() - reminderMinutes * 60 * 1000);
 
-        console.log('[CreateEvent] Creating reminder:', {
+        console.log('[CreateEvent] Creating and scheduling reminder:', {
           eventStart: startDateTime.toISOString(),
           minutesBefore: reminderMinutes,
           reminderTime: reminderScheduledTime.toISOString(),
@@ -141,7 +142,8 @@ export default function CreateEventScreen() {
           inFuture: reminderScheduledTime > now,
         });
 
-        const { error: reminderError } = await supabase
+        // Insert reminder record
+        const { data: reminderData, error: reminderError } = await supabase
           .from('event_reminders')
           .insert({
             user_id: session.user.id,
@@ -150,13 +152,32 @@ export default function CreateEventScreen() {
             minutes_before: reminderMinutes,
             notification_type: 'notification',
             scheduled_time: reminderScheduledTime.toISOString(),
-            enabled: true, // CRITICAL: must be true for scheduler to find it
-          });
+            enabled: true,
+          })
+          .select()
+          .single();
 
         if (reminderError) {
-          console.warn('[CreateEvent] Reminder creation failed:', reminderError);
-        } else {
-          console.log('[CreateEvent] Reminder created successfully');
+          console.warn('[CreateEvent] Reminder insertion failed:', reminderError);
+          Alert.alert('Warning', 'Event created but reminder failed to save. Try adding reminder again.');
+        } else if (reminderData) {
+          // PHASE 1: Schedule immediately (don't wait for periodic scheduler)
+          console.log('[CreateEvent] Reminder inserted, scheduling OS notification immediately...');
+          const scheduleResult = await scheduleReminder(
+            reminderData.id,
+            title.trim(),
+            reminderScheduledTime,
+            eventData.id,
+            reminderMinutes
+          );
+
+          if (scheduleResult.success) {
+            console.log('[CreateEvent] ✓ Reminder successfully scheduled with notification ID:', scheduleResult.notificationId);
+          } else {
+            console.warn('[CreateEvent] ⚠️ Reminder could not be scheduled:', scheduleResult.error);
+            // Don't fail the whole event creation, just warn
+            Alert.alert('Info', `Event created. Reminder scheduling: ${scheduleResult.error}`);
+          }
         }
       }
 

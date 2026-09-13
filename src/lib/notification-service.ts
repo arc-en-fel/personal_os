@@ -144,127 +144,76 @@ export const testNotification = async (): Promise<boolean> => {
 };
 
 /**
- * CORE FUNCTION: Schedule Event Reminder
+ * CORE FUNCTION: Schedule Reminder
  * 
- * Single unified pipeline for scheduling event reminders to OS notifications.
- * This is the main entry point for all event reminder scheduling.
+ * NEW DETERMINISTIC IMPLEMENTATION
+ * 
+ * Single responsibility: Take a reminder database record and schedule it to OS.
+ * 
+ * This is the ONLY function that calls Notifications.scheduleNotificationAsync().
+ * All event reminders go through this function.
  * 
  * Flow:
- * 1. Calculate reminder trigger time (event.start_time - minutes_before)
- * 2. Validate reminder (not in past, not duplicate, quiet hours check)
- * 3. Schedule OS notification with DATE trigger
- * 4. Persist notification ID to database
- * 5. Verify notification is in OS scheduled list
- * 6. Log comprehensive diagnostics
+ * 1. Validate reminder time is in future
+ * 2. Build DATE trigger (SDK 54 requirement)
+ * 3. Schedule OS notification
+ * 4. Verify in getAllScheduledNotificationsAsync()
+ * 5. Persist notification ID to database
+ * 6. Log diagnostics
  * 
  * @param reminderId - Database ID of event_reminder record
- * @param eventId - Associated calendar_event ID
  * @param eventTitle - Title of the event
- * @param eventStartTime - When the event starts
- * @param minutesBefore - How many minutes before event to trigger
- * @param notificationType - 'notification' or 'email'
- * @param userPreferences - User's notification preferences (quiet hours, etc.)
- * @returns Object with success flag, notification ID, and diagnostics
+ * @param remindAtTime - Absolute timestamp when reminder should fire (already calculated: eventStart - minutesBefore)
+ * @param eventId - Associated calendar_event ID
+ * @param minutesBefore - How many minutes before event (for logging)
+ * @returns Object with success flag and notification ID
  */
-export const scheduleEventReminder = async (
+export const scheduleReminder = async (
   reminderId: string,
-  eventId: string,
   eventTitle: string,
-  eventStartTime: Date,
-  minutesBefore: number,
-  notificationType: 'notification' | 'email',
-  userPreferences: any = null
+  remindAtTime: Date,
+  eventId: string,
+  minutesBefore: number
 ): Promise<{
   success: boolean;
   notificationId: string | null;
-  scheduledTime: Date | null;
-  diagnostics: Record<string, any>;
+  error?: string;
 }> => {
-  const diagnostics: Record<string, any> = {
-    reminderId,
-    eventId,
-    eventTitle,
-    minutesBefore,
-    schedulerVersion: SCHEDULER_VERSION,
-  };
-
   try {
     const Notifications = await import('expo-notifications');
     const now = new Date();
 
-    // Step 1: Calculate reminder trigger time
-    const reminderTriggerTime = new Date(eventStartTime.getTime() - minutesBefore * 60 * 1000);
-    diagnostics.eventStartTime = eventStartTime.toISOString();
-    diagnostics.reminderTriggerTime = reminderTriggerTime.toISOString();
-    diagnostics.currentTime = now.toISOString();
-    diagnostics.msUntilTrigger = reminderTriggerTime.getTime() - now.getTime();
-    diagnostics.secondsUntilTrigger = Math.floor(diagnostics.msUntilTrigger / 1000);
+    console.log(`\n[scheduleReminder] ▶️  SCHEDULING REMINDER`);
+    console.log(`[scheduleReminder] Reminder ID: ${reminderId}`);
+    console.log(`[scheduleReminder] Event: "${eventTitle}"`);
+    console.log(`[scheduleReminder] Current time: ${now.toISOString()}`);
+    console.log(`[scheduleReminder] Remind at: ${remindAtTime.toISOString()}`);
+    console.log(`[scheduleReminder] Minutes until trigger: ${Math.floor((remindAtTime.getTime() - now.getTime()) / 1000 / 60)}`);
+    console.log(`[scheduleReminder] Seconds until trigger: ${Math.floor((remindAtTime.getTime() - now.getTime()) / 1000)}`);
 
-    console.log(`[scheduleEventReminder] Processing event reminder ${reminderId}:`);
-    console.log(`  Event: ${eventTitle}`);
-    console.log(`  Event start: ${eventStartTime.toISOString()}`);
-    console.log(`  Trigger time: ${reminderTriggerTime.toISOString()}`);
-    console.log(`  Current time: ${now.toISOString()}`);
-    console.log(`  Minutes before: ${minutesBefore}`);
-    console.log(`  Time until trigger: ${diagnostics.secondsUntilTrigger}s`);
-
-    // Step 2: Validation - is reminder in the past?
-    if (reminderTriggerTime <= now) {
-      diagnostics.skipReason = 'REMINDER_IN_PAST';
-      console.log(`[scheduleEventReminder] Skipped: reminder is in the past`);
+    // VALIDATION: Is reminder in the past?
+    if (remindAtTime <= now) {
+      console.log(`[scheduleReminder] ❌ EXPIRED: Reminder time is in the past. Skipping.`);
       return {
         success: false,
         notificationId: null,
-        scheduledTime: null,
-        diagnostics,
+        error: 'REMINDER_IN_PAST',
       };
     }
 
-    // Step 2b: Validation - check quiet hours
-    if (notificationType === 'notification' && userPreferences && isInQuietHours(userPreferences)) {
-      diagnostics.skipReason = 'QUIET_HOURS';
-      console.log(`[scheduleEventReminder] Skipped: quiet hours active`);
-      return {
-        success: false,
-        notificationId: null,
-        scheduledTime: null,
-        diagnostics,
-      };
-    }
-
-    // Step 3: Check if notification already scheduled for this reminder
-    const existingNotifications = await Notifications.getAllScheduledNotificationsAsync();
-    const alreadyScheduled = existingNotifications.some(
-      notif => notif.trigger && 
-               typeof notif.trigger === 'object' &&
-               'date' in notif.trigger &&
-               new Date(notif.trigger.date).getTime() === reminderTriggerTime.getTime() &&
-               notif.content?.data?.reminderId === reminderId
-    );
-
-    if (alreadyScheduled) {
-      diagnostics.skipReason = 'ALREADY_SCHEDULED';
-      console.log(`[scheduleEventReminder] Skipped: notification already scheduled for this reminder`);
-      return {
-        success: false,
-        notificationId: null,
-        scheduledTime: null,
-        diagnostics,
-      };
-    }
-
-    // Step 4: Schedule OS notification with DATE trigger (SDK 54 requirement)
+    // BUILD TRIGGER: SDK 54 requires explicit type
     const trigger: any = {
       type: Notifications.SchedulableTriggerInputTypes.DATE,
-      date: reminderTriggerTime,
+      date: remindAtTime,
     };
+    console.log(`[scheduleReminder] Trigger object:`, JSON.stringify(trigger));
 
-    console.log(`[scheduleEventReminder] Scheduling notification with DATE trigger for ${reminderTriggerTime.toISOString()}`);
-
+    // SCHEDULE: Call Expo notification service
+    console.log(`[scheduleReminder] Calling Notifications.scheduleNotificationAsync()...`);
     const notificationId = await Notifications.scheduleNotificationAsync({
       content: {
-        title: 'Reminder',
-        body: `${eventTitle} - ${reminderTriggerTime.toLocaleTimeString()}`,
+        title: '⏰ Reminder',
+        body: eventTitle,
         data: {
           reminderId,
           eventId,
@@ -277,86 +226,64 @@ export const scheduleEventReminder = async (
     });
 
     if (!notificationId) {
-      diagnostics.error = 'NO_NOTIFICATION_ID_RETURNED';
-      console.error(`[scheduleEventReminder] Failed: no notification ID returned from OS`);
+      console.error(`[scheduleReminder] ❌ FAILED: Expo returned no notification ID`);
       return {
         success: false,
         notificationId: null,
-        scheduledTime: null,
-        diagnostics,
+        error: 'NO_NOTIFICATION_ID',
       };
     }
 
-    diagnostics.notificationId = notificationId;
-    console.log(`[scheduleEventReminder] OS scheduled with notification ID: ${notificationId}`);
+    console.log(`[scheduleReminder] ✓ Expo returned notification ID: ${notificationId}`);
 
-    // Step 5: Persist notification ID to database
+    // VERIFY: Check that notification is in OS scheduled list
     try {
-      const { error: updateError } = await supabase
+      const allScheduled = await Notifications.getAllScheduledNotificationsAsync();
+      const found = allScheduled.find(n => n.identifier === notificationId);
+
+      console.log(`[scheduleReminder] Total notifications in OS: ${allScheduled.length}`);
+
+      if (found) {
+        console.log(`[scheduleReminder] ✓ Notification verified in OS scheduled list`);
+      } else {
+        console.warn(`[scheduleReminder] ⚠️  WARNING: Notification NOT found in OS scheduled list after scheduling`);
+      }
+    } catch (e) {
+      console.warn(`[scheduleReminder] ⚠️  Could not verify notification in OS:`, e);
+    }
+
+    // PERSIST: Save notification ID to database
+    try {
+      const { error } = await supabase
         .from('event_reminders')
         .update({
           notification_id: notificationId,
-          notification_id_scheduled_at: new Date().toISOString(),
+          notification_id_scheduled_at: now.toISOString(),
           scheduled_by_version: SCHEDULER_VERSION,
         })
         .eq('id', reminderId);
 
-      if (updateError) {
-        console.warn(`[scheduleEventReminder] Failed to persist notification ID: ${updateError.message}`);
-        diagnostics.persistError = updateError.message;
+      if (error) {
+        console.error(`[scheduleReminder] ⚠️  Failed to persist notification ID to DB:`, error);
       } else {
-        console.log(`[scheduleEventReminder] Persisted notification ID to database`);
-        diagnostics.persistedToDB = true;
+        console.log(`[scheduleReminder] ✓ Persisted notification ID to database`);
       }
     } catch (e) {
-      console.error(`[scheduleEventReminder] Error persisting notification ID:`, e);
-      diagnostics.persistError = String(e);
+      console.error(`[scheduleReminder] ⚠️  Error persisting to DB:`, e);
     }
 
-    // Step 6: Verify notification in OS scheduled list
-    try {
-      const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
-      const verifyNotif = scheduledNotifications.find(n => n.identifier === notificationId);
-
-      diagnostics.totalScheduledNotifications = scheduledNotifications.length;
-
-      if (verifyNotif) {
-        diagnostics.verifiedInOS = true;
-        console.log(`[scheduleEventReminder] Verified in OS scheduled list (total: ${scheduledNotifications.length})`);
-        console.log(`[scheduleEventReminder] Scheduled notification details:`, JSON.stringify({
-          identifier: verifyNotif.identifier,
-          trigger: verifyNotif.trigger,
-          content: {
-            title: verifyNotif.content.title,
-            body: verifyNotif.content.body,
-          },
-        }, null, 2));
-      } else {
-        console.warn(`[scheduleEventReminder] WARNING: Notification ID not found in OS scheduled list after scheduling`);
-        diagnostics.verifiedInOS = false;
-      }
-    } catch (e) {
-      console.error(`[scheduleEventReminder] Error verifying scheduled notifications:`, e);
-      diagnostics.verificationError = String(e);
-    }
-
-    console.log(`[scheduleEventReminder] SUCCESS: Reminder ${reminderId} scheduled for ${reminderTriggerTime.toISOString()}`);
+    console.log(`[scheduleReminder] ✅ SUCCESS: Reminder scheduled\n`);
 
     return {
       success: true,
       notificationId,
-      scheduledTime: reminderTriggerTime,
-      diagnostics,
     };
   } catch (e) {
-    diagnostics.error = String(e);
-    console.error(`[scheduleEventReminder] Exception while scheduling reminder ${reminderId}:`, e);
-
+    console.error(`[scheduleReminder] ❌ EXCEPTION:`, e);
     return {
       success: false,
       notificationId: null,
-      scheduledTime: null,
-      diagnostics,
+      error: String(e),
     };
   }
 };
@@ -510,7 +437,7 @@ export default {
   configureNotificationHandler,
   requestNotificationPermissions,
   testNotification,
-  scheduleEventReminder,
+  scheduleReminder,  // NEW: Core scheduling function
   cancelEventReminder,
   cancelAllRemindersForEvent,
   getNotificationPreferences,

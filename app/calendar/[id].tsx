@@ -3,6 +3,7 @@ import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, St
 import { useLocalSearchParams, router } from 'expo-router';
 import { useAuth } from '@/src/providers/AuthProvider';
 import { supabase } from '@/src/lib/supabase';
+import { scheduleReminder, cancelAllRemindersForEvent } from '@/src/lib/notification-service';
 import { colors, spacing } from '@/src/theme';
 
 type CalendarEvent = {
@@ -132,6 +133,9 @@ export default function CalendarEventScreen() {
         return;
       }
 
+      const reminderScheduledTime = new Date(new Date(event.start_time).getTime() - selectedReminderMinutes * 60000);
+
+      // Insert reminder record
       const { data, error } = await supabase
         .from('event_reminders')
         .insert({
@@ -140,13 +144,29 @@ export default function CalendarEventScreen() {
           minutes_before: selectedReminderMinutes,
           notification_type: selectedNotificationType,
           title: `Reminder: ${event.title}`,
-          scheduled_time: new Date(new Date(event.start_time).getTime() - selectedReminderMinutes * 60000).toISOString(),
-          enabled: true, // CRITICAL: Must be true for scheduler to find it
+          scheduled_time: reminderScheduledTime.toISOString(),
+          enabled: true,
         })
         .select()
         .single();
 
       if (error) throw error;
+
+      // PHASE 1: Schedule immediately
+      console.log('[EventDetail] Reminder inserted, scheduling OS notification immediately...');
+      const scheduleResult = await scheduleReminder(
+        data.id,
+        event.title,
+        reminderScheduledTime,
+        event.id,
+        selectedReminderMinutes
+      );
+
+      if (scheduleResult.success) {
+        console.log('[EventDetail] ✓ Reminder scheduled with notification ID:', scheduleResult.notificationId);
+      } else {
+        console.warn('[EventDetail] ⚠️ Reminder could not be scheduled:', scheduleResult.error);
+      }
 
       setReminders([...reminders, data as Reminder]);
       setShowAddReminder(false);
@@ -158,6 +178,23 @@ export default function CalendarEventScreen() {
 
   const deleteReminder = async (reminderId: string) => {
     try {
+      // Get the reminder's notification ID
+      const reminder = reminders.find(r => r.id === reminderId);
+      
+      if (reminder?.notification_id) {
+        console.log('[EventDetail] Cancelling OS notification:', reminder.notification_id);
+        
+        // Import here to avoid circular dependency
+        const Notifications = await import('expo-notifications');
+        try {
+          await Notifications.cancelScheduledNotificationAsync(reminder.notification_id);
+          console.log('[EventDetail] ✓ OS notification cancelled');
+        } catch (e) {
+          console.warn('[EventDetail] Failed to cancel OS notification:', e);
+        }
+      }
+
+      // Delete from database
       const { error } = await supabase
         .from('event_reminders')
         .delete()
@@ -182,6 +219,11 @@ export default function CalendarEventScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
+            // Cancel all reminders for this event
+            console.log('[EventDetail] Cancelling all reminders for event:', event.id);
+            await cancelAllRemindersForEvent(event.id);
+
+            // Delete the event
             const { error } = await supabase.from('calendar_events').delete().eq('id', event.id);
             if (error) throw error;
 
