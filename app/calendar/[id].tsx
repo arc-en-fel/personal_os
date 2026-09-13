@@ -139,6 +139,10 @@ export default function CalendarEventScreen() {
     if (!session || !event) return;
     setSaving(true);
 
+    console.log('[EDIT EVENT] ▶️  Save started');
+    console.log('[EDIT EVENT] Event ID:', event.id);
+    console.log('[EDIT EVENT] Existing reminders:', reminders.length);
+
     try {
       // Build new datetime objects
       const newStartTime = new Date(editStartDate);
@@ -162,7 +166,7 @@ export default function CalendarEventScreen() {
       const reminderChanged = editReminderMinutes !== (reminders[0]?.minutes_before || null);
       const needsReminderUpdate = timeChanged || reminderChanged;
 
-      console.log('[EventDetail] Saving event:', {
+      console.log('[EDIT EVENT] Change detection:', {
         titleChanged: title !== event.title,
         timeChanged,
         reminderChanged,
@@ -176,6 +180,7 @@ export default function CalendarEventScreen() {
       }
 
       // Update event
+      console.log('[EDIT EVENT] Updating calendar_events...');
       const { error: updateError } = await supabase
         .from('calendar_events')
         .update({
@@ -190,55 +195,69 @@ export default function CalendarEventScreen() {
         })
         .eq('id', event.id);
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('[EDIT EVENT] ERROR updating event:', updateError);
+        throw updateError;
+      }
 
-      console.log('[EventDetail] Event updated successfully');
+      console.log('[EDIT EVENT] ✓ Event updated successfully');
 
       // Handle reminder changes if needed
       if (needsReminderUpdate) {
         const existingReminder = reminders[0];
 
+        console.log('[EDIT EVENT] Reminder update needed. Existing reminder:', existingReminder?.id);
+
         if (editReminderMinutes === null) {
           // Remove reminder if exists
           if (existingReminder) {
-            console.log('[EventDetail] Cancelling existing reminder...');
+            console.log('[EDIT EVENT] Removing reminder...');
             if (existingReminder.notification_id) {
               const Notifications = await import('expo-notifications');
               try {
                 await Notifications.cancelScheduledNotificationAsync(existingReminder.notification_id);
-                console.log('[EventDetail] ✓ OS notification cancelled');
+                console.log('[EDIT EVENT] ✓ OS notification cancelled');
               } catch (e) {
-                console.warn('[EventDetail] Failed to cancel OS notification:', e);
+                console.warn('[EDIT EVENT] ⚠️ Failed to cancel OS notification:', e);
               }
             }
 
             // Delete from DB
+            console.log('[EDIT EVENT] Deleting reminder from DB...');
             const { error: deleteError } = await supabase
               .from('event_reminders')
               .delete()
               .eq('id', existingReminder.id);
 
-            if (deleteError) throw deleteError;
+            if (deleteError) {
+              console.error('[EDIT EVENT] ERROR deleting reminder:', deleteError);
+              throw deleteError;
+            }
+            console.log('[EDIT EVENT] ✓ Reminder deleted from DB');
             setReminders([]);
           }
         } else {
           // Update or create reminder
           const newReminderScheduledTime = new Date(newStartTime.getTime() - editReminderMinutes * 60 * 1000);
+          console.log('[EDIT EVENT] New reminder scheduled time:', newReminderScheduledTime.toISOString());
 
           if (existingReminder) {
+            console.log('[EDIT EVENT] Updating existing reminder:', existingReminder.id);
+
             // Cancel old notification
             if (existingReminder.notification_id) {
-              console.log('[EventDetail] Cancelling old notification:', existingReminder.notification_id);
+              console.log('[EDIT EVENT] Cancelling old OS notification:', existingReminder.notification_id);
               const Notifications = await import('expo-notifications');
               try {
                 await Notifications.cancelScheduledNotificationAsync(existingReminder.notification_id);
-                console.log('[EventDetail] ✓ Old notification cancelled');
+                console.log('[EDIT EVENT] ✓ Old notification cancelled');
               } catch (e) {
-                console.warn('[EventDetail] Failed to cancel old notification:', e);
+                console.warn('[EDIT EVENT] ⚠️ Failed to cancel old notification:', e);
               }
             }
 
-            // Update reminder
+            // Update reminder record
+            console.log('[EDIT EVENT] Updating reminder in DB...');
             const { error: updateReminderError } = await supabase
               .from('event_reminders')
               .update({
@@ -249,9 +268,31 @@ export default function CalendarEventScreen() {
               })
               .eq('id', existingReminder.id);
 
-            if (updateReminderError) throw updateReminderError;
+            if (updateReminderError) {
+              console.error('[EDIT EVENT] ERROR updating reminder:', updateReminderError);
+              throw updateReminderError;
+            }
+            console.log('[EDIT EVENT] ✓ Reminder updated in DB');
+
+            // Schedule new notification
+            console.log('[EDIT EVENT] Scheduling new notification for existing reminder...');
+            const scheduleResult = await scheduleReminder(
+              existingReminder.id,
+              title.trim(),
+              newReminderScheduledTime,
+              event.id,
+              editReminderMinutes
+            );
+
+            if (!scheduleResult.success) {
+              console.warn('[EDIT EVENT] ⚠️ Failed to schedule reminder:', scheduleResult.error);
+              Alert.alert('Warning', 'Event updated but reminder could not be scheduled.');
+            } else {
+              console.log('[EDIT EVENT] ✓ Notification scheduled:', scheduleResult.notificationId);
+            }
           } else {
             // Create new reminder
+            console.log('[EDIT EVENT] Creating new reminder...');
             const { data: newReminderData, error: insertError } = await supabase
               .from('event_reminders')
               .insert({
@@ -266,38 +307,47 @@ export default function CalendarEventScreen() {
               .select()
               .single();
 
-            if (insertError) throw insertError;
-            setReminders(newReminderData ? [newReminderData as Reminder] : []);
-          }
+            if (insertError) {
+              console.error('[EDIT EVENT] ERROR inserting reminder:', insertError);
+              throw insertError;
+            }
 
-          // Schedule new notification
-          const reminderToSchedule = existingReminder ? 
-            { ...existingReminder, minutes_before: editReminderMinutes } : 
-            reminders[0];
+            if (!newReminderData) {
+              console.error('[EDIT EVENT] ERROR: No reminder data returned from insert');
+              throw new Error('No reminder data returned from insert');
+            }
 
-          console.log('[EventDetail] Scheduling new reminder...');
-          const scheduleResult = await scheduleReminder(
-            existingReminder?.id || (reminders[0]?.id || ''),
-            title.trim(),
-            newReminderScheduledTime,
-            event.id,
-            editReminderMinutes
-          );
+            console.log('[EDIT EVENT] ✓ Reminder created with ID:', newReminderData.id);
+            setReminders([newReminderData as Reminder]);
 
-          if (!scheduleResult.success) {
-            console.warn('[EventDetail] ⚠️ Failed to schedule reminder:', scheduleResult.error);
-            Alert.alert('Warning', 'Event updated but reminder could not be scheduled. Please try again.');
-          } else {
-            console.log('[EventDetail] ✓ Reminder scheduled successfully');
+            // Schedule notification for NEW reminder
+            console.log('[EDIT EVENT] Scheduling notification for new reminder...');
+            const scheduleResult = await scheduleReminder(
+              newReminderData.id,
+              title.trim(),
+              newReminderScheduledTime,
+              event.id,
+              editReminderMinutes
+            );
+
+            if (!scheduleResult.success) {
+              console.warn('[EDIT EVENT] ⚠️ Failed to schedule reminder:', scheduleResult.error);
+              Alert.alert('Warning', 'Event updated but reminder could not be scheduled.');
+            } else {
+              console.log('[EDIT EVENT] ✓ Notification scheduled:', scheduleResult.notificationId);
+            }
           }
         }
+      } else {
+        console.log('[EDIT EVENT] No reminder changes needed');
       }
 
+      console.log('[EDIT EVENT] ✓ Save completed successfully');
       Alert.alert('Success', 'Event updated');
       setEditing(false);
       await loadEvent();
     } catch (e) {
-      console.error('[EventDetail] Save error:', e);
+      console.error('[EDIT EVENT] ❌ SAVE FAILED:', e);
       Alert.alert('Error', 'Failed to save changes: ' + String(e));
     } finally {
       setSaving(false);
