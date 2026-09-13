@@ -129,21 +129,41 @@ export default function CreateEventScreen() {
       if (reminderMinutes !== null) {
         const reminderScheduledTime = new Date(startDateTime.getTime() - reminderMinutes * 60 * 1000);
 
-        const { error: reminderError } = await supabase
+        // DUPLICATE PREVENTION: Check if a reminder already exists for this event with same timing
+        console.log(`[CreateEvent] Checking for duplicate reminders for event ${eventData.id}`);
+        const { data: existingReminders, error: checkError } = await supabase
           .from('event_reminders')
-          .insert({
-            user_id: session.user.id,
-            event_id: eventData.id,
-            title: `Reminder: ${title}`,
-            minutes_before: reminderMinutes,
-            notification_type: 'notification',
-            scheduled_time: reminderScheduledTime.toISOString(),
-            enabled: true,
-          });
+          .select('id')
+          .eq('event_id', eventData.id)
+          .eq('minutes_before', reminderMinutes)
+          .eq('notification_type', 'notification');
 
-        if (reminderError) {
-          console.warn('Failed to create reminder:', reminderError);
-          Alert.alert('Warning', 'Event created but reminder failed. You can add it later in event details.');
+        if (checkError) {
+          console.warn('[CreateEvent] Failed to check for duplicate reminders:', checkError);
+        } else if (existingReminders && existingReminders.length > 0) {
+          console.warn(`[CreateEvent] Duplicate reminder detected! Event already has ${existingReminders.length} reminder(s) with this timing`);
+          Alert.alert('Warning', 'A reminder with this timing already exists for this event');
+        } else {
+          // No duplicates found - create the reminder
+          console.log('[CreateEvent] No duplicates found - creating new reminder');
+          const { error: reminderError } = await supabase
+            .from('event_reminders')
+            .insert({
+              user_id: session.user.id,
+              event_id: eventData.id,
+              title: `Reminder: ${title}`,
+              minutes_before: reminderMinutes,
+              notification_type: 'notification',
+              scheduled_time: reminderScheduledTime.toISOString(),
+              enabled: true,
+            });
+
+          if (reminderError) {
+            console.warn('[CreateEvent] Failed to create reminder:', reminderError);
+            Alert.alert('Warning', 'Event created but reminder failed. You can add it later in event details.');
+          } else {
+            console.log('[CreateEvent] Reminder created successfully');
+          }
         }
       }
 

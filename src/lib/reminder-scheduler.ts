@@ -1,35 +1,52 @@
 /**
- * Reminder Scheduler Service
- * Periodically checks for pending reminders and schedules notifications
+ * Reminder Scheduler Service - v2.0 Rewrite
+ * 
+ * Simplified single pipeline for checking and scheduling pending reminders.
+ * Uses new scheduleEventReminder() function from notification-service.
+ * 
+ * Key improvements:
+ * - Uses single unified scheduleEventReminder() pipeline
+ * - Checks notification_id to prevent duplicate scheduling
+ * - Comprehensive diagnostics for each reminder
+ * - Atomic operations (schedule + persist = single function)
+ * - Cleaner pending reminder query
  */
 
 import { supabase } from './supabase';
-import { scheduleNotification, logNotificationDelivery, getNotificationPreferences, isInQuietHours } from './notification-service';
-import { Alert } from 'react-native';
+import { scheduleEventReminder, getNotificationPreferences } from './notification-service';
 
 type ReminderRecord = {
   id: string;
   user_id: string;
   event_id: string;
-  event: {
-    title: string;
-    start_time: string;
-  };
-  title: string;
-  description?: string;
-  scheduled_time: string;
+  notification_id: string | null;
+  notification_id_scheduled_at: string | null;
   minutes_before: number;
   notification_type: 'email' | 'notification';
+  scheduled_time: string;
   enabled: boolean;
+  calendar_events: {
+    id: string;
+    title: string;
+    start_time: string;
+  } | null;
 };
 
 /**
- * Fetch all pending reminders for a user
+ * Fetch all pending reminders that need scheduling
+ * 
+ * A reminder is "pending" if:
+ * 1. enabled = true
+ * 2. scheduled_time is in the future
+ * 3. No OS notification has been scheduled yet (notification_id is null)
+ * 
+ * OR if notification_id exists but might need rescheduling (rare edge case)
  */
 export const getPendingReminders = async (userId: string): Promise<ReminderRecord[]> => {
   try {
     const now = new Date();
 
+    console.log(`[getPendingReminders] Fetching pending reminders for user ${userId}`);
     console.log(`[getPendingReminders] Current time: ${now.toISOString()}`);
 
     const { data, error } = await supabase
@@ -38,145 +55,169 @@ export const getPendingReminders = async (userId: string): Promise<ReminderRecor
         id,
         user_id,
         event_id,
+        notification_id,
+        notification_id_scheduled_at,
         title,
-        description,
-        scheduled_time,
         minutes_before,
         notification_type,
+        scheduled_time,
         enabled,
         calendar_events (id, title, start_time)
       `)
       .eq('user_id', userId)
       .eq('enabled', true)
-      .gt('scheduled_time', now.toISOString())  // ← FIXED: Get reminders AFTER now (future)
+      .gt('scheduled_time', now.toISOString())
+      .is('notification_id', null)  // Only get reminders NOT yet scheduled
       .order('scheduled_time', { ascending: true });
 
     if (error) {
-      console.log('Reminder table unavailable (may not be created yet)');
+      console.warn('[getPendingReminders] Query failed:', error.message);
       return [];
     }
 
-    console.log(`[getPendingReminders] Found ${data?.length || 0} future reminders`);
-    
-    return data || [];
+    const reminderCount = data?.length || 0;
+    console.log(`[getPendingReminders] Found ${reminderCount} unscheduled future reminders`);
+
+    if (reminderCount > 0) {
+      console.log(`[getPendingReminders] Next reminder in:`, (new Date(data![0].scheduled_time).getTime() - now.getTime()) / 1000, 'seconds');
+    }
+
+    const reminders = (data || []) as unknown as ReminderRecord[];
+    return reminders;
   } catch (e) {
-    console.log('Error fetching pending reminders:', e);
+    console.error('[getPendingReminders] Unexpected error:', e);
     return [];
   }
 };
 
 /**
- * Schedule a single reminder notification
+ * Schedule a single reminder notification via unified pipeline
+ * 
+ * This is a simple wrapper that calls scheduleEventReminder() with
+ * data from the database reminder record.
  */
 export const scheduleReminderNotification = async (
   reminder: ReminderRecord,
-  preferences: any
+  userPreferences: any
 ): Promise<boolean> => {
   try {
-    // Check quiet hours
-    if (reminder.notification_type === 'notification' && isInQuietHours(preferences)) {
-      console.log(`[scheduleReminderNotification] Reminder ${reminder.id} suppressed by quiet hours`);
+    // Parse event data
+    const event = reminder.calendar_events;
+    if (!event) {
+      console.warn(`[scheduleReminderNotification] Reminder ${reminder.id} has no associated event`);
       return false;
     }
 
-    const event = reminder.event as any;
-    const eventTitle = event?.title || reminder.title;
-    const triggerDate = new Date(reminder.scheduled_time);
-    const now = new Date();
+    const eventTitle = event.title;
+    const eventStartTime = new Date(event.start_time);
 
-    // Diagnostic logs
-    console.log(`[scheduleReminderNotification] Processing reminder ${reminder.id}:`);
-    console.log(`  Event: ${eventTitle}`);
-    console.log(`  Current time: ${now.toISOString()}`);
-    console.log(`  Raw reminder timestamp: ${reminder.scheduled_time}`);
-    console.log(`  Parsed trigger date: ${triggerDate.toISOString()}`);
-    console.log(`  Milliseconds until trigger: ${triggerDate.getTime() - now.getTime()}`);
+    console.log(`[scheduleReminderNotification] Scheduling reminder ${reminder.id}:`);
+    console.log(`  Event: "${eventTitle}"`);
+    console.log(`  Event start: ${eventStartTime.toISOString()}`);
+    console.log(`  Minutes before: ${reminder.minutes_before}`);
+    console.log(`  Notification type: ${reminder.notification_type}`);
 
-    // VALIDATION: Skip if reminder is in the past
-    if (triggerDate <= now) {
-      console.log(`[scheduleReminderNotification] Reminder ${reminder.id} skipped - scheduled time is in the past (${triggerDate.toISOString()} <= ${now.toISOString()})`);
-      return false;
-    }
+    // Call unified scheduling pipeline
+    const result = await scheduleEventReminder(
+      reminder.id,
+      reminder.event_id,
+      eventTitle,
+      eventStartTime,
+      reminder.minutes_before,
+      reminder.notification_type as 'notification' | 'email',
+      userPreferences
+    );
 
-    // Schedule push notification
-    if (reminder.notification_type === 'notification') {
-      console.log(`[scheduleReminderNotification] Scheduling push notification for reminder ${reminder.id}`);
-      
-      const notificationId = await scheduleNotification(
-        {
-          title: 'Reminder',
-          body: `${eventTitle} - ${triggerDate.toLocaleTimeString()}`,
-          data: {
-            reminderId: reminder.id,
-            eventId: reminder.event_id,
-            eventTitle,
-          },
-          sound: true,
-        },
-        triggerDate
-      );
-
-      if (notificationId) {
-        // Log delivery attempt
-        await logNotificationDelivery(reminder.user_id, reminder.id, 'push', 'sent');
-        console.log(`[scheduleReminderNotification] Successfully scheduled reminder ${reminder.id} for ${triggerDate.toISOString()}`);
-        return true;
-      } else {
-        console.error(`[scheduleReminderNotification] Failed to schedule notification for reminder ${reminder.id}`);
-        await logNotificationDelivery(reminder.user_id, reminder.id, 'push', 'failed');
-        return false;
-      }
-    } else if (reminder.notification_type === 'email') {
-      // For email reminders, log as pending (would need backend service to send)
-      console.log(`[scheduleReminderNotification] Email reminder ${reminder.id} scheduled for ${triggerDate.toISOString()}`);
+    if (result.success) {
+      console.log(`[scheduleReminderNotification] ✓ Success for reminder ${reminder.id}`);
+      console.log(`[scheduleReminderNotification] Notification ID: ${result.notificationId}`);
+      console.log(`[scheduleReminderNotification] Scheduled for: ${result.scheduledTime?.toISOString()}`);
       return true;
+    } else {
+      console.warn(`[scheduleReminderNotification] ✗ Failed for reminder ${reminder.id}`);
+      console.warn(`[scheduleReminderNotification] Skip reason: ${result.diagnostics.skipReason || 'UNKNOWN'}`);
+      console.warn(`[scheduleReminderNotification] Diagnostics:`, result.diagnostics);
+      return false;
     }
-
-    return false;
   } catch (e) {
-    console.error(`[scheduleReminderNotification] Error processing reminder ${reminder.id}:`, e);
-    await logNotificationDelivery(reminder.user_id, reminder.id, reminder.notification_type === 'email' ? 'email' : 'push', 'failed');
+    console.error(`[scheduleReminderNotification] Exception for reminder ${reminder.id}:`, e);
     return false;
   }
 };
 
 /**
  * Process all pending reminders for a user
+ * 
+ * This is the main periodic check function:
+ * 1. Fetch all pending reminders
+ * 2. Get user preferences (quiet hours, etc.)
+ * 3. For each reminder, schedule via unified pipeline
+ * 4. Log results
+ * 
+ * @returns Count of successfully scheduled reminders
  */
 export const processPendingReminders = async (userId: string): Promise<number> => {
   try {
+    console.log(`\n[processPendingReminders] ====== Periodic check started ======`);
+    const checkStartTime = Date.now();
+
+    // Fetch pending reminders
     const reminders = await getPendingReminders(userId);
+    
+    // Fetch user preferences
     const preferences = await getNotificationPreferences(userId);
+    if (!preferences) {
+      console.log('[processPendingReminders] No user preferences found (using defaults)');
+    }
 
-    let scheduledCount = 0;
+    console.log(`[processPendingReminders] Processing ${reminders.length} pending reminder(s)`);
 
+    let successCount = 0;
+    let skipCount = 0;
+
+    // Process each reminder
     for (const reminder of reminders) {
       const success = await scheduleReminderNotification(reminder, preferences);
       if (success) {
-        scheduledCount++;
+        successCount++;
+      } else {
+        skipCount++;
       }
     }
 
-    console.log(`Processed ${reminders.length} pending reminders, scheduled ${scheduledCount}`);
-    return scheduledCount;
+    const checkDurationMs = Date.now() - checkStartTime;
+
+    console.log(`[processPendingReminders] ====== Check complete ======`);
+    console.log(`[processPendingReminders] Scheduled: ${successCount}, Skipped: ${skipCount}, Duration: ${checkDurationMs}ms`);
+    console.log(`[processPendingReminders] Next check in 60 seconds\n`);
+
+    return successCount;
   } catch (e) {
-    console.error('Error processing pending reminders:', e);
+    console.error('[processPendingReminders] Unexpected error:', e);
     return 0;
   }
 };
 
 /**
- * Start periodic reminder checking (runs every minute)
+ * Start periodic reminder checking (runs every 60 seconds)
+ * 
+ * Scheduler lifecycle:
+ * - On startup: immediately processes pending reminders
+ * - Then: repeats every 60 seconds
+ * - Continues until stopReminderScheduler() called
  */
 let reminderCheckInterval: NodeJS.Timeout | null = null;
+let currentUserId: string | null = null;
 
 export const startReminderScheduler = (userId: string, intervalMs: number = 60000) => {
   if (reminderCheckInterval) {
-    console.log('Reminder scheduler already running');
+    console.log(`[startReminderScheduler] Scheduler already running for user ${currentUserId}`);
     return;
   }
 
-  console.log('Starting reminder scheduler...');
+  currentUserId = userId;
+  console.log(`[startReminderScheduler] Starting reminder scheduler for user ${userId}`);
+  console.log(`[startReminderScheduler] Check interval: ${intervalMs}ms (${intervalMs / 1000}s)`);
 
   // Check immediately on start
   void processPendingReminders(userId);
@@ -185,6 +226,8 @@ export const startReminderScheduler = (userId: string, intervalMs: number = 6000
   reminderCheckInterval = setInterval(() => {
     void processPendingReminders(userId);
   }, intervalMs);
+
+  console.log(`[startReminderScheduler] Scheduler started`);
 };
 
 /**
@@ -194,26 +237,22 @@ export const stopReminderScheduler = () => {
   if (reminderCheckInterval) {
     clearInterval(reminderCheckInterval);
     reminderCheckInterval = null;
-    console.log('Reminder scheduler stopped');
+    console.log(`[stopReminderScheduler] Scheduler stopped for user ${currentUserId}`);
+    currentUserId = null;
   }
 };
 
 /**
- * Mark reminder as processed (disable it after firing)
+ * Get scheduler status
  */
-export const markReminderProcessed = async (reminderId: string): Promise<boolean> => {
-  try {
-    const { error } = await supabase
-      .from('event_reminders')
-      .update({ enabled: false })
-      .eq('id', reminderId);
-
-    if (error) throw error;
-    return true;
-  } catch (e) {
-    console.error('Error marking reminder as processed:', e);
-    return false;
-  }
+export const getReminderSchedulerStatus = (): {
+  running: boolean;
+  userId: string | null;
+} => {
+  return {
+    running: reminderCheckInterval !== null,
+    userId: currentUserId,
+  };
 };
 
 export default {
@@ -222,5 +261,5 @@ export default {
   processPendingReminders,
   startReminderScheduler,
   stopReminderScheduler,
-  markReminderProcessed,
+  getReminderSchedulerStatus,
 };
