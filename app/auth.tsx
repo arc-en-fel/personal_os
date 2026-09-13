@@ -20,7 +20,7 @@ export default function AuthScreen() {
   }
 
   return <View style={styles.container}>
-    <Text style={styles.eyebrow}>PERSONAL OS</Text><Text style={styles.title}>A calmer way to see your life.</Text>
+    <Text style={styles.eyebrow}>ORBI</Text><Text style={styles.title}>A calmer way to see your life.</Text>
     <Text style={styles.subtitle}>One place for the actions, goals, and patterns that matter to you.</Text>
     {!configured && <View style={styles.notice}><Text style={styles.noticeText}>Supabase is not configured yet. Add the values from `.env.example` to connect your account.</Text></View>}
     <TextInput autoCapitalize="none" keyboardType="email-address" placeholder="Email" placeholderTextColor={colors.muted} value={email} onChangeText={setEmail} style={styles.input} />

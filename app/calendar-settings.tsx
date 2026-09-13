@@ -47,7 +47,7 @@ export default function CalendarSettingsScreen() {
   const [showTimezoneMenu, setShowTimezoneMenu] = useState(false);
 
   // Form state
-  const [calendarName, setCalendarName] = useState('Personal Tracker');
+  const [calendarName, setCalendarName] = useState('orbi Calendar');
   const [autoSync, setAutoSync] = useState(true);
   const [syncTypes, setSyncTypes] = useState<SyncType[]>(['reminders', 'goals', 'study_sessions']);
   const [timezone, setTimezone] = useState('UTC');
@@ -79,7 +79,7 @@ export default function CalendarSettingsScreen() {
       } else if (data) {
         // Settings loaded successfully
         const settings = data as CalendarSettings;
-        setCalendarName(settings.device_calendar_name || 'Personal Tracker');
+        setCalendarName(settings.device_calendar_name || 'orbi Calendar');
         setAutoSync(settings.auto_sync ?? true);
         setSyncTypes((settings.sync_types as SyncType[]) || ['reminders', 'goals', 'study_sessions']);
         setTimezone(settings.timezone || 'UTC');
@@ -105,7 +105,7 @@ export default function CalendarSettingsScreen() {
         user_id: session.user.id,
         auto_sync: true,
         sync_types: ['reminders', 'goals', 'study_sessions'],
-        device_calendar_name: 'Personal Tracker',
+        device_calendar_name: 'orbi Calendar',
         device_calendar_id: null,
         colors: {
           reminder: '#6B7280',
@@ -208,7 +208,7 @@ export default function CalendarSettingsScreen() {
           <Text style={styles.sectionTitle}>Device Calendar</Text>
           <Text style={styles.label}>Calendar Name</Text>
           <TextInput
-            placeholder="Personal Tracker"
+            placeholder="orbi Calendar"
             placeholderTextColor={colors.muted}
             value={calendarName}
             onChangeText={setCalendarName}

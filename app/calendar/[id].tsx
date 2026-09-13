@@ -16,37 +16,23 @@ type CalendarEvent = {
   all_day: boolean;
   color: string;
   location: string | null;
-  recurrence_rule: string | null;
-  is_recurring: boolean;
 };
 
 type Reminder = {
   id: string;
   minutes_before: number;
   notification_type: 'email' | 'notification';
-  notification_id: string | null;
-  notification_id_scheduled_at: string | null;
 };
 
 const REMINDER_OPTIONS = [
-  { label: 'No reminder', minutes: null },
+  { label: 'At time of event', minutes: 0 },
   { label: '5 minutes before', minutes: 5 },
+  { label: '10 minutes before', minutes: 10 },
   { label: '15 minutes before', minutes: 15 },
   { label: '30 minutes before', minutes: 30 },
   { label: '1 hour before', minutes: 60 },
   { label: '1 day before', minutes: 1440 },
 ];
-
-const REPEAT_OPTIONS = [
-  { label: 'Does not repeat', value: null },
-  { label: 'Daily', value: 'DAILY' },
-  { label: 'Weekly', value: 'WEEKLY' },
-  { label: 'Monthly', value: 'MONTHLY' },
-  { label: 'Yearly', value: 'YEARLY' },
-];
-
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const MINUTES = Array.from({ length: 60 }, (_, i) => i);
 
 export default function CalendarEventScreen() {
   const { session } = useAuth();
@@ -60,20 +46,10 @@ export default function CalendarEventScreen() {
   const [selectedReminderMinutes, setSelectedReminderMinutes] = useState(15);
   const [selectedNotificationType, setSelectedNotificationType] = useState<'email' | 'notification'>('notification');
 
-  // Edit form state
+  // Form state
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
-  const [editStartDate, setEditStartDate] = useState(new Date());
-  const [editStartHour, setEditStartHour] = useState(0);
-  const [editStartMinute, setEditStartMinute] = useState(0);
-  const [editEndDate, setEditEndDate] = useState(new Date());
-  const [editEndHour, setEditEndHour] = useState(1);
-  const [editEndMinute, setEditEndMinute] = useState(0);
-  const [editReminderMinutes, setEditReminderMinutes] = useState<number | null>(null);
-  const [editRepeat, setEditRepeat] = useState<string | null>(null);
-  const [showDatePicker, setShowDatePicker] = useState<'start' | 'end' | null>(null);
-  const [showTimePicker, setShowTimePicker] = useState<'start' | 'end' | null>(null);
 
   const loadEvent = useCallback(async () => {
     if (!session || !id) return;
@@ -97,28 +73,9 @@ export default function CalendarEventScreen() {
       if (eventRes.data) {
         const eventData = eventRes.data as CalendarEvent;
         setEvent(eventData);
-        
-        // Populate all edit fields
         setTitle(eventData.title);
         setDescription(eventData.description || '');
         setLocation(eventData.location || '');
-
-        const startTime = new Date(eventData.start_time);
-        setEditStartDate(new Date(startTime.getFullYear(), startTime.getMonth(), startTime.getDate()));
-        setEditStartHour(startTime.getHours());
-        setEditStartMinute(startTime.getMinutes());
-
-        const endTime = new Date(eventData.end_time);
-        setEditEndDate(new Date(endTime.getFullYear(), endTime.getMonth(), endTime.getDate()));
-        setEditEndHour(endTime.getHours());
-        setEditEndMinute(endTime.getMinutes());
-
-        setEditRepeat(eventData.recurrence_rule?.split(';')[0].split('=')[1] || null);
-
-        // Set first reminder as selected (if any)
-        if (remindersRes.data && remindersRes.data.length > 0) {
-          setEditReminderMinutes(remindersRes.data[0].minutes_before);
-        }
       }
 
       if (remindersRes.data) {
@@ -139,215 +96,23 @@ export default function CalendarEventScreen() {
     if (!session || !event) return;
     setSaving(true);
 
-    console.log('[EDIT EVENT] ▶️  Save started');
-    console.log('[EDIT EVENT] Event ID:', event.id);
-    console.log('[EDIT EVENT] Existing reminders:', reminders.length);
-
     try {
-      // Build new datetime objects
-      const newStartTime = new Date(editStartDate);
-      newStartTime.setHours(editStartHour, editStartMinute, 0, 0);
-
-      const newEndTime = new Date(editEndDate);
-      newEndTime.setHours(editEndHour, editEndMinute, 0, 0);
-
-      // Validate
-      if (newEndTime <= newStartTime) {
-        Alert.alert('Error', 'End time must be after start time');
-        setSaving(false);
-        return;
-      }
-
-      const oldStartTime = new Date(event.start_time);
-      const oldEndTime = new Date(event.end_time);
-
-      // Detect if reminder-related fields changed
-      const timeChanged = newStartTime.getTime() !== oldStartTime.getTime() || newEndTime.getTime() !== oldEndTime.getTime();
-      const reminderChanged = editReminderMinutes !== (reminders[0]?.minutes_before || null);
-      const needsReminderUpdate = timeChanged || reminderChanged;
-
-      console.log('[EDIT EVENT] Change detection:', {
-        titleChanged: title !== event.title,
-        timeChanged,
-        reminderChanged,
-        needsReminderUpdate,
-      });
-
-      // Build recurrence rule
-      let recurrenceRule = null;
-      if (editRepeat) {
-        recurrenceRule = `FREQ=${editRepeat}`;
-      }
-
-      // Update event
-      console.log('[EDIT EVENT] Updating calendar_events...');
-      const { error: updateError } = await supabase
+      const { error } = await supabase
         .from('calendar_events')
         .update({
           title: title.trim(),
           description: description.trim() || null,
           location: location.trim() || null,
-          start_time: newStartTime.toISOString(),
-          end_time: newEndTime.toISOString(),
-          recurrence_rule: recurrenceRule,
-          is_recurring: editRepeat !== null,
           updated_at: new Date().toISOString()
         })
         .eq('id', event.id);
 
-      if (updateError) {
-        console.error('[EDIT EVENT] ERROR updating event:', updateError);
-        throw updateError;
-      }
+      if (error) throw error;
 
-      console.log('[EDIT EVENT] ✓ Event updated successfully');
-
-      // Handle reminder changes if needed
-      if (needsReminderUpdate) {
-        const existingReminder = reminders[0];
-
-        console.log('[EDIT EVENT] Reminder update needed. Existing reminder:', existingReminder?.id);
-
-        if (editReminderMinutes === null) {
-          // Remove reminder if exists
-          if (existingReminder) {
-            console.log('[EDIT EVENT] Removing reminder...');
-            if (existingReminder.notification_id) {
-              const Notifications = await import('expo-notifications');
-              try {
-                await Notifications.cancelScheduledNotificationAsync(existingReminder.notification_id);
-                console.log('[EDIT EVENT] ✓ OS notification cancelled');
-              } catch (e) {
-                console.warn('[EDIT EVENT] ⚠️ Failed to cancel OS notification:', e);
-              }
-            }
-
-            // Delete from DB
-            console.log('[EDIT EVENT] Deleting reminder from DB...');
-            const { error: deleteError } = await supabase
-              .from('event_reminders')
-              .delete()
-              .eq('id', existingReminder.id);
-
-            if (deleteError) {
-              console.error('[EDIT EVENT] ERROR deleting reminder:', deleteError);
-              throw deleteError;
-            }
-            console.log('[EDIT EVENT] ✓ Reminder deleted from DB');
-            setReminders([]);
-          }
-        } else {
-          // Update or create reminder
-          const newReminderScheduledTime = new Date(newStartTime.getTime() - editReminderMinutes * 60 * 1000);
-          console.log('[EDIT EVENT] New reminder scheduled time:', newReminderScheduledTime.toISOString());
-
-          if (existingReminder) {
-            console.log('[EDIT EVENT] Updating existing reminder:', existingReminder.id);
-
-            // Cancel old notification
-            if (existingReminder.notification_id) {
-              console.log('[EDIT EVENT] Cancelling old OS notification:', existingReminder.notification_id);
-              const Notifications = await import('expo-notifications');
-              try {
-                await Notifications.cancelScheduledNotificationAsync(existingReminder.notification_id);
-                console.log('[EDIT EVENT] ✓ Old notification cancelled');
-              } catch (e) {
-                console.warn('[EDIT EVENT] ⚠️ Failed to cancel old notification:', e);
-              }
-            }
-
-            // Update reminder record
-            console.log('[EDIT EVENT] Updating reminder in DB...');
-            const { error: updateReminderError } = await supabase
-              .from('event_reminders')
-              .update({
-                minutes_before: editReminderMinutes,
-                scheduled_time: newReminderScheduledTime.toISOString(),
-                notification_id: null,
-                notification_id_scheduled_at: null,
-              })
-              .eq('id', existingReminder.id);
-
-            if (updateReminderError) {
-              console.error('[EDIT EVENT] ERROR updating reminder:', updateReminderError);
-              throw updateReminderError;
-            }
-            console.log('[EDIT EVENT] ✓ Reminder updated in DB');
-
-            // Schedule new notification
-            console.log('[EDIT EVENT] Scheduling new notification for existing reminder...');
-            const scheduleResult = await scheduleReminder(
-              existingReminder.id,
-              title.trim(),
-              newReminderScheduledTime,
-              event.id,
-              editReminderMinutes
-            );
-
-            if (!scheduleResult.success) {
-              console.warn('[EDIT EVENT] ⚠️ Failed to schedule reminder:', scheduleResult.error);
-              Alert.alert('Warning', 'Event updated but reminder could not be scheduled.');
-            } else {
-              console.log('[EDIT EVENT] ✓ Notification scheduled:', scheduleResult.notificationId);
-            }
-          } else {
-            // Create new reminder
-            console.log('[EDIT EVENT] Creating new reminder...');
-            const { data: newReminderData, error: insertError } = await supabase
-              .from('event_reminders')
-              .insert({
-                user_id: session.user.id,
-                event_id: event.id,
-                minutes_before: editReminderMinutes,
-                notification_type: 'notification',
-                title: `Reminder: ${title}`,
-                scheduled_time: newReminderScheduledTime.toISOString(),
-                enabled: true,
-              })
-              .select()
-              .single();
-
-            if (insertError) {
-              console.error('[EDIT EVENT] ERROR inserting reminder:', insertError);
-              throw insertError;
-            }
-
-            if (!newReminderData) {
-              console.error('[EDIT EVENT] ERROR: No reminder data returned from insert');
-              throw new Error('No reminder data returned from insert');
-            }
-
-            console.log('[EDIT EVENT] ✓ Reminder created with ID:', newReminderData.id);
-            setReminders([newReminderData as Reminder]);
-
-            // Schedule notification for NEW reminder
-            console.log('[EDIT EVENT] Scheduling notification for new reminder...');
-            const scheduleResult = await scheduleReminder(
-              newReminderData.id,
-              title.trim(),
-              newReminderScheduledTime,
-              event.id,
-              editReminderMinutes
-            );
-
-            if (!scheduleResult.success) {
-              console.warn('[EDIT EVENT] ⚠️ Failed to schedule reminder:', scheduleResult.error);
-              Alert.alert('Warning', 'Event updated but reminder could not be scheduled.');
-            } else {
-              console.log('[EDIT EVENT] ✓ Notification scheduled:', scheduleResult.notificationId);
-            }
-          }
-        }
-      } else {
-        console.log('[EDIT EVENT] No reminder changes needed');
-      }
-
-      console.log('[EDIT EVENT] ✓ Save completed successfully');
       Alert.alert('Success', 'Event updated');
       setEditing(false);
       await loadEvent();
     } catch (e) {
-      console.error('[EDIT EVENT] ❌ SAVE FAILED:', e);
       Alert.alert('Error', 'Failed to save changes: ' + String(e));
     } finally {
       setSaving(false);
@@ -489,43 +254,15 @@ export default function CalendarEventScreen() {
   }
 
   if (editing) {
-    const formatDate = (date: Date) => {
-      const today = new Date();
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      if (date.toDateString() === today.toDateString()) return 'Today';
-      if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
-
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    };
-
-    const formatTime = (hour: number, minute: number) => {
-      return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-    };
-
-    const dateOptions = (() => {
-      const dates = [];
-      const today = new Date();
-      for (let i = 0; i < 30; i++) {
-        const date = new Date(today);
-        date.setDate(date.getDate() + i);
-        date.setHours(0, 0, 0, 0);
-        dates.push(date);
-      }
-      return dates;
-    })();
-
     return (
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.screen}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.content}>
           <Pressable onPress={() => setEditing(false)}>
             <Text style={styles.back}>‹ Back</Text>
           </Pressable>
 
           <Text style={styles.title}>Edit Event</Text>
 
-          {/* Title */}
           <Text style={styles.label}>Title</Text>
           <TextInput
             placeholder="Event title"
@@ -535,7 +272,6 @@ export default function CalendarEventScreen() {
             style={styles.input}
           />
 
-          {/* Description */}
           <Text style={styles.label}>Description</Text>
           <TextInput
             placeholder="Optional details"
@@ -546,7 +282,6 @@ export default function CalendarEventScreen() {
             multiline
           />
 
-          {/* Location */}
           <Text style={styles.label}>Location</Text>
           <TextInput
             placeholder="Optional location"
@@ -555,210 +290,6 @@ export default function CalendarEventScreen() {
             onChangeText={setLocation}
             style={styles.input}
           />
-
-          {/* Date & Time */}
-          <Text style={styles.label}>Start Date & Time</Text>
-          <View style={styles.dateTimeRow}>
-            <Pressable
-              onPress={() => setShowDatePicker(showDatePicker === 'start' ? null : 'start')}
-              style={styles.pickerButton}
-            >
-              <Text style={styles.pickerButtonText}>📅 {formatDate(editStartDate)}</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setShowTimePicker(showTimePicker === 'start' ? null : 'start')}
-              style={styles.pickerButton}
-            >
-              <Text style={styles.pickerButtonText}>🕐 {formatTime(editStartHour, editStartMinute)}</Text>
-            </Pressable>
-          </View>
-
-          {showDatePicker === 'start' && (
-            <View style={styles.pickerContainer}>
-              <ScrollView style={styles.dateScroll} showsVerticalScrollIndicator={false}>
-                {dateOptions.map((date, i) => {
-                  const isSelected = date.toDateString() === editStartDate.toDateString();
-                  return (
-                    <Pressable
-                      key={i}
-                      onPress={() => {
-                        setEditStartDate(date);
-                        setShowDatePicker(null);
-                      }}
-                      style={[styles.dateOption, isSelected && styles.dateOptionSelected]}
-                    >
-                      <Text style={[styles.dateOptionText, isSelected && styles.dateOptionTextSelected]}>
-                        {formatDate(date)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          )}
-
-          {showTimePicker === 'start' && (
-            <View style={styles.timePickerContainer}>
-              <View style={styles.timeColumn}>
-                <Text style={styles.timeLabel}>Hour</Text>
-                <ScrollView style={styles.timeScroll} scrollEventThrottle={16} nestedScrollEnabled={true}>
-                  {HOURS.map(h => (
-                    <Pressable
-                      key={h}
-                      onPress={() => setEditStartHour(h)}
-                      style={[styles.timeOption, editStartHour === h && styles.timeOptionSelected]}
-                    >
-                      <Text style={[styles.timeOptionText, editStartHour === h && styles.timeOptionTextSelected]}>
-                        {h.toString().padStart(2, '0')}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-              <View style={styles.timeColumn}>
-                <Text style={styles.timeLabel}>Minute</Text>
-                <ScrollView style={styles.timeScroll} scrollEventThrottle={16} nestedScrollEnabled={true}>
-                  {MINUTES.map(m => (
-                    <Pressable
-                      key={m}
-                      onPress={() => setEditStartMinute(m)}
-                      style={[styles.timeOption, editStartMinute === m && styles.timeOptionSelected]}
-                    >
-                      <Text style={[styles.timeOptionText, editStartMinute === m && styles.timeOptionTextSelected]}>
-                        {m.toString().padStart(2, '0')}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-            </View>
-          )}
-
-          {/* End Date & Time */}
-          <Text style={styles.label}>End Date & Time</Text>
-          <View style={styles.dateTimeRow}>
-            <Pressable
-              onPress={() => setShowDatePicker(showDatePicker === 'end' ? null : 'end')}
-              style={styles.pickerButton}
-            >
-              <Text style={styles.pickerButtonText}>📅 {formatDate(editEndDate)}</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setShowTimePicker(showTimePicker === 'end' ? null : 'end')}
-              style={styles.pickerButton}
-            >
-              <Text style={styles.pickerButtonText}>🕐 {formatTime(editEndHour, editEndMinute)}</Text>
-            </Pressable>
-          </View>
-
-          {showDatePicker === 'end' && (
-            <View style={styles.pickerContainer}>
-              <ScrollView style={styles.dateScroll} showsVerticalScrollIndicator={false}>
-                {dateOptions.map((date, i) => {
-                  const isSelected = date.toDateString() === editEndDate.toDateString();
-                  return (
-                    <Pressable
-                      key={i}
-                      onPress={() => {
-                        setEditEndDate(date);
-                        setShowDatePicker(null);
-                      }}
-                      style={[styles.dateOption, isSelected && styles.dateOptionSelected]}
-                    >
-                      <Text style={[styles.dateOptionText, isSelected && styles.dateOptionTextSelected]}>
-                        {formatDate(date)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          )}
-
-          {showTimePicker === 'end' && (
-            <View style={styles.timePickerContainer}>
-              <View style={styles.timeColumn}>
-                <Text style={styles.timeLabel}>Hour</Text>
-                <ScrollView style={styles.timeScroll} scrollEventThrottle={16} nestedScrollEnabled={true}>
-                  {HOURS.map(h => (
-                    <Pressable
-                      key={h}
-                      onPress={() => setEditEndHour(h)}
-                      style={[styles.timeOption, editEndHour === h && styles.timeOptionSelected]}
-                    >
-                      <Text style={[styles.timeOptionText, editEndHour === h && styles.timeOptionTextSelected]}>
-                        {h.toString().padStart(2, '0')}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-              <View style={styles.timeColumn}>
-                <Text style={styles.timeLabel}>Minute</Text>
-                <ScrollView style={styles.timeScroll} scrollEventThrottle={16} nestedScrollEnabled={true}>
-                  {MINUTES.map(m => (
-                    <Pressable
-                      key={m}
-                      onPress={() => setEditEndMinute(m)}
-                      style={[styles.timeOption, editEndMinute === m && styles.timeOptionSelected]}
-                    >
-                      <Text style={[styles.timeOptionText, editEndMinute === m && styles.timeOptionTextSelected]}>
-                        {m.toString().padStart(2, '0')}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-            </View>
-          )}
-
-          {/* Reminder */}
-          <Text style={styles.label}>Reminder</Text>
-          <View style={styles.reminderOptions}>
-            {REMINDER_OPTIONS.map(option => (
-              <Pressable
-                key={String(option.minutes)}
-                onPress={() => setEditReminderMinutes(option.minutes)}
-                style={[
-                  styles.reminderButton,
-                  editReminderMinutes === option.minutes && styles.reminderButtonActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.reminderButtonText,
-                    editReminderMinutes === option.minutes && styles.reminderButtonTextActive,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {/* Repeat */}
-          <Text style={styles.label}>Repeat</Text>
-          <View style={styles.repeatOptions}>
-            {REPEAT_OPTIONS.map(option => (
-              <Pressable
-                key={String(option.value)}
-                onPress={() => setEditRepeat(option.value)}
-                style={[
-                  styles.repeatButton,
-                  editRepeat === option.value && styles.repeatButtonActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.repeatButtonText,
-                    editRepeat === option.value && styles.repeatButtonTextActive,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
 
           <View style={styles.buttonGroup}>
             <Pressable onPress={() => setEditing(false)} style={[styles.button, styles.cancelButton]}>
@@ -1017,39 +548,4 @@ const styles = StyleSheet.create({
   optionLabel: { color: colors.ink, fontSize: 14 },
   optionLabelSelected: { fontWeight: '700', color: colors.sageDark },
   checkmark: { color: colors.sageDark, fontSize: 16, fontWeight: '800' },
-
-  // Date/Time picker styles for edit
-  dateTimeRow: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.md },
-  pickerButton: { flex: 1, backgroundColor: colors.card, borderColor: colors.line, borderRadius: 8, borderWidth: 1, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, alignItems: 'center' },
-  pickerButtonText: { color: colors.ink, fontSize: 14, fontWeight: '600' },
-
-  pickerContainer: { backgroundColor: colors.card, borderRadius: 8, marginBottom: spacing.md, maxHeight: 250 },
-  dateScroll: { maxHeight: 250 },
-  dateOption: { paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.line },
-  dateOptionSelected: { backgroundColor: colors.sageDark },
-  dateOptionText: { color: colors.ink, fontSize: 14 },
-  dateOptionTextSelected: { color: colors.card, fontWeight: '800' },
-
-  timePickerContainer: { flexDirection: 'row', backgroundColor: colors.card, borderRadius: 8, marginBottom: spacing.md, height: 240, overflow: 'hidden' },
-  timeColumn: { flex: 1, borderRightWidth: 1, borderRightColor: colors.line },
-  timeLabel: { textAlign: 'center', color: colors.muted, fontSize: 11, fontWeight: '800', paddingVertical: spacing.sm },
-  timeScroll: { flex: 1, minHeight: 200 },
-  timeOption: { paddingVertical: spacing.md, paddingHorizontal: spacing.sm, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.line, height: 44 },
-  timeOptionSelected: { backgroundColor: colors.coral },
-  timeOptionText: { color: colors.muted, fontSize: 14, fontWeight: '600' },
-  timeOptionTextSelected: { color: colors.card, fontWeight: '800' },
-
-  // Reminder options in edit
-  reminderOptions: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap', marginBottom: spacing.md },
-  reminderButton: { flex: 1, minWidth: '48%', backgroundColor: colors.card, borderColor: colors.line, borderRadius: 8, borderWidth: 1, paddingVertical: spacing.md, paddingHorizontal: spacing.md, alignItems: 'center' },
-  reminderButtonActive: { backgroundColor: colors.sageDark, borderColor: colors.sageDark },
-  reminderButtonText: { color: colors.ink, fontSize: 12, fontWeight: '600' },
-  reminderButtonTextActive: { color: colors.card, fontWeight: '800' },
-
-  // Repeat options in edit
-  repeatOptions: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap', marginBottom: spacing.md },
-  repeatButton: { flex: 1, minWidth: '48%', backgroundColor: colors.card, borderColor: colors.line, borderRadius: 8, borderWidth: 1, paddingVertical: spacing.md, paddingHorizontal: spacing.md, alignItems: 'center' },
-  repeatButtonActive: { backgroundColor: colors.coral, borderColor: colors.coral },
-  repeatButtonText: { color: colors.ink, fontSize: 12, fontWeight: '600' },
-  repeatButtonTextActive: { color: colors.card, fontWeight: '800' },
 });
