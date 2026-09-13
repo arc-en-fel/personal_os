@@ -30,6 +30,8 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [greeting, setGreeting] = useState(getGreeting());
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [diagnosticsExpanded, setDiagnosticsExpanded] = useState(false);
+  const [diagnosticsData, setDiagnosticsData] = useState<Record<string, any> | null>(null);
 
   const load = useCallback(async () => {
     if (!session) return;
@@ -94,6 +96,46 @@ export default function HomeScreen() {
       setTestResult(`❌ Error: ${String(err)}`);
     }
   }, [session]);
+
+  const handleShowDiagnostics = useCallback(async () => {
+    if (!session) return;
+
+    try {
+      const Notifications = await import('expo-notifications');
+      const now = new Date();
+
+      // Fetch all scheduled notifications
+      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+
+      // Fetch all reminders from DB
+      const { data: reminders } = await supabase
+        .from('event_reminders')
+        .select('id, event_id, minutes_before, scheduled_time, notification_id, enabled')
+        .eq('user_id', session.user.id)
+        .order('scheduled_time', { ascending: true });
+
+      const pendingCount = reminders?.filter(r => 
+        r.enabled && new Date(r.scheduled_time) > now && !r.notification_id
+      ).length || 0;
+
+      const scheduledCount = reminders?.filter(r => !!r.notification_id).length || 0;
+
+      setDiagnosticsData({
+        currentTime: now.toISOString(),
+        osScheduledNotifications: scheduled.length,
+        dbReminders: reminders?.length || 0,
+        dbPendingReminders: pendingCount,
+        dbScheduledReminders: scheduledCount,
+        schedulerRunning: getReminderSchedulerStatus().running,
+        schedulerUserId: getReminderSchedulerStatus().userId,
+      });
+
+      setDiagnosticsExpanded(!diagnosticsExpanded);
+    } catch (e) {
+      console.error('[HOME] Error fetching diagnostics:', e);
+      setDiagnosticsData({ error: String(e) });
+    }
+  }, [session, diagnosticsExpanded]);
 
   useFocusEffect(
     useCallback(() => {
