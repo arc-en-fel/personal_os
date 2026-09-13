@@ -62,6 +62,8 @@ export const configureNotificationHandler = async () => {
             shouldShowAlert: true,
             shouldPlaySound: true,
             shouldSetBadge: false,
+            shouldShowBanner: true,
+            shouldShowList: true,
           };
         },
       });
@@ -91,6 +93,13 @@ export const testNotification = async (): Promise<boolean> => {
     console.log('[testNotification] Test notification time:', testTime.toISOString());
     console.log('[testNotification] Seconds until trigger: 5');
     
+    // SDK 54 requires explicit trigger type
+    const trigger: any = {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: 5,
+    };
+    console.log('[testNotification] Trigger object:', JSON.stringify(trigger));
+    
     const notificationId = await Notifications.scheduleNotificationAsync({
       content: {
         title: 'Test Notification',
@@ -98,12 +107,23 @@ export const testNotification = async (): Promise<boolean> => {
         data: { testNotification: true },
         sound: 'default',
       },
-      trigger: {
-        seconds: 5,
-      },
+      trigger,
     });
     
     console.log('[testNotification] Successfully scheduled with ID:', notificationId);
+    
+    // Log all scheduled notifications after scheduling
+    try {
+      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+      console.log('[testNotification] All scheduled notifications:', scheduled.length);
+      const testNotif = scheduled.find(n => n.identifier === notificationId);
+      if (testNotif) {
+        console.log('[testNotification] Test notification found in scheduled list:', JSON.stringify(testNotif));
+      }
+    } catch (e) {
+      console.error('[testNotification] Error fetching scheduled notifications:', e);
+    }
+    
     return true;
   } catch (e) {
     console.error('[testNotification] Failed to schedule:', e);
@@ -149,6 +169,12 @@ export const sendPushNotification = async (
     const Notifications = await import('expo-notifications');
     
     // Schedule local notification (works in Expo Go)
+    // SDK 54 requires explicit trigger type
+    const trigger: any = {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: 1,
+    };
+    
     await Notifications.scheduleNotificationAsync({
       content: {
         title: payload.title,
@@ -157,9 +183,7 @@ export const sendPushNotification = async (
         sound: payload.sound !== false ? 'default' : undefined,
         badge: payload.badge,
       },
-      trigger: {
-        seconds: 1,
-      },
+      trigger,
     });
 
     return true;
@@ -179,15 +203,30 @@ export const scheduleNotification = async (
   try {
     const Notifications = await import('expo-notifications');
     
-    // Calculate seconds until trigger
     const now = new Date();
-    const secondsUntilTrigger = Math.max(1, Math.floor((triggerDate.getTime() - now.getTime()) / 1000));
 
     console.log(`[scheduleNotification] Scheduling notification:`);
     console.log(`  Title: ${payload.title}`);
-    console.log(`  Trigger time: ${triggerDate.toISOString()}`);
+    console.log(`  Trigger date: ${triggerDate.toISOString()}`);
     console.log(`  Current time: ${now.toISOString()}`);
+    
+    const msUntilTrigger = triggerDate.getTime() - now.getTime();
+    const secondsUntilTrigger = Math.max(1, Math.floor(msUntilTrigger / 1000));
+    
+    console.log(`  Milliseconds until trigger: ${msUntilTrigger}`);
     console.log(`  Seconds until trigger: ${secondsUntilTrigger}`);
+
+    // SDK 54 requires explicit trigger type with DATE for specific times
+    // Use DATE trigger for precise timestamp-based scheduling
+    const trigger: any = {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: triggerDate,
+    };
+    
+    console.log(`[scheduleNotification] Trigger object:`, JSON.stringify({
+      type: 'DATE',
+      date: triggerDate.toISOString(),
+    }));
 
     // Schedule the notification
     const notificationId = await Notifications.scheduleNotificationAsync({
@@ -198,9 +237,7 @@ export const scheduleNotification = async (
         sound: payload.sound !== false ? 'default' : undefined,
         badge: payload.badge,
       },
-      trigger: {
-        seconds: secondsUntilTrigger,
-      },
+      trigger,
     });
 
     if (!notificationId) {
@@ -209,6 +246,22 @@ export const scheduleNotification = async (
     }
 
     console.log(`[scheduleNotification] Successfully scheduled with ID: ${notificationId}`);
+    
+    // Log all scheduled notifications after scheduling
+    try {
+      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+      console.log(`[scheduleNotification] Total scheduled notifications: ${scheduled.length}`);
+      const thisNotif = scheduled.find(n => n.identifier === notificationId);
+      if (thisNotif) {
+        console.log(`[scheduleNotification] This notification in scheduled list:`, JSON.stringify({
+          identifier: thisNotif.identifier,
+          trigger: thisNotif.trigger,
+        }));
+      }
+    } catch (e) {
+      console.error('[scheduleNotification] Error fetching scheduled notifications:', e);
+    }
+    
     return notificationId;
   } catch (e) {
     console.error('[scheduleNotification] Error scheduling notification:', {
