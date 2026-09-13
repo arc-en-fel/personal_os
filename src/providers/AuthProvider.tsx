@@ -3,7 +3,7 @@ import { PropsWithChildren, createContext, useContext, useEffect, useState } fro
 import { router } from 'expo-router';
 import { isSupabaseConfigured, supabase } from '@/src/lib/supabase';
 import { startReminderScheduler, stopReminderScheduler } from '@/src/lib/reminder-scheduler';
-import { configureNotificationHandler } from '@/src/lib/notification-service';
+import { configureNotificationHandler, requestNotificationPermissions } from '@/src/lib/notification-service';
 import { checkForUpdates, getUpdateInfo } from '@/src/lib/updateService';
 
 type AuthContextValue = {
@@ -22,26 +22,35 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Don't configure notifications at startup (prevents Expo Go warnings)
-    // Notifications will be configured when first reminder is scheduled
-    
     // Initialize app
     const initialize = async () => {
       try {
-        // Log update info for diagnostics
+        console.log('[AuthProvider] Initializing app...');
+        
+        // Step 1: Log update info for diagnostics
         const updateInfo = await getUpdateInfo();
-        console.log('[App] Update info:', updateInfo);
+        console.log('[AuthProvider] Update info:', updateInfo);
 
-        // Check for OTA updates (non-blocking, won't crash if unavailable)
+        // Step 2: Check for OTA updates (non-blocking)
         const updateResult = await checkForUpdates();
         if (updateResult.error) {
-          console.log('[App] Update check skipped or failed, continuing startup');
+          console.log('[AuthProvider] Update check skipped or failed, continuing startup');
         } else if (updateResult.isAvailable) {
-          console.log('[App] Update downloaded, will be applied on next restart');
+          console.log('[AuthProvider] Update downloaded, will be applied on next restart');
         }
+        
+        // Step 3: Request notification permissions
+        console.log('[AuthProvider] Requesting notification permissions...');
+        const permissionsGranted = await requestNotificationPermissions();
+        console.log('[AuthProvider] Notification permissions granted:', permissionsGranted);
+        
+        // Step 4: Configure notification handler
+        console.log('[AuthProvider] Configuring notification handler...');
+        await configureNotificationHandler();
+        console.log('[AuthProvider] Notification handler configured');
       } catch (error) {
-        console.warn('[App] Update check error:', error);
-        // Continue startup even if update check fails
+        console.warn('[AuthProvider] Initialization error:', error);
+        // Continue startup even if notifications fail
       }
 
       // Initialize Supabase

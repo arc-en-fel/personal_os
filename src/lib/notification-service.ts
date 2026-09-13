@@ -18,16 +18,46 @@ export type NotificationPayload = {
 };
 
 /**
+ * Request notification permissions
+ */
+export const requestNotificationPermissions = async (): Promise<boolean> => {
+  try {
+    const Notifications = await import('expo-notifications');
+    
+    console.log('[requestNotificationPermissions] Requesting notification permissions...');
+    
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    console.log('[requestNotificationPermissions] Current status:', existingStatus);
+    
+    let finalStatus = existingStatus;
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+      console.log('[requestNotificationPermissions] After request:', finalStatus);
+    }
+    
+    const granted = finalStatus === 'granted';
+    console.log('[requestNotificationPermissions] Permissions granted:', granted);
+    return granted;
+  } catch (e) {
+    console.error('[requestNotificationPermissions] Error:', e);
+    return false;
+  }
+};
+
+/**
  * Configure notification handler
  */
 export const configureNotificationHandler = async () => {
   try {
     const Notifications = await import('expo-notifications');
     
+    console.log('[configureNotificationHandler] Configuring notification handler...');
+    
     if (Notifications?.setNotificationHandler) {
       Notifications.setNotificationHandler({
         handleNotification: async notification => {
-          console.log('Notification received:', notification);
+          console.log('[handleNotification] Notification received:', notification);
           return {
             shouldShowAlert: true,
             shouldPlaySound: true,
@@ -35,13 +65,49 @@ export const configureNotificationHandler = async () => {
           };
         },
       });
+      console.log('[configureNotificationHandler] Handler configured successfully');
     }
   } catch (e) {
     const errorMsg = String(e);
     // Suppress push token warnings
     if (!errorMsg?.includes('Android Push notifications')) {
-      console.warn('Failed to configure notification handler:', e);
+      console.warn('[configureNotificationHandler] Failed to configure:', e);
     }
+  }
+};
+
+/**
+ * Test notification - schedule a notification 5 seconds from now
+ */
+export const testNotification = async (): Promise<boolean> => {
+  try {
+    console.log('[testNotification] Starting test notification...');
+    
+    const Notifications = await import('expo-notifications');
+    const now = new Date();
+    const testTime = new Date(now.getTime() + 5000); // 5 seconds from now
+    
+    console.log('[testNotification] Current time:', now.toISOString());
+    console.log('[testNotification] Test notification time:', testTime.toISOString());
+    console.log('[testNotification] Seconds until trigger: 5');
+    
+    const notificationId = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Test Notification',
+        body: 'This is a test notification - appears 5 seconds from now',
+        data: { testNotification: true },
+        sound: 'default',
+      },
+      trigger: {
+        seconds: 5,
+      },
+    });
+    
+    console.log('[testNotification] Successfully scheduled with ID:', notificationId);
+    return true;
+  } catch (e) {
+    console.error('[testNotification] Failed to schedule:', e);
+    return false;
   }
 };
 
@@ -137,10 +203,19 @@ export const scheduleNotification = async (
       },
     });
 
+    if (!notificationId) {
+      console.error('[scheduleNotification] No notification ID returned - scheduling may have failed');
+      return null;
+    }
+
     console.log(`[scheduleNotification] Successfully scheduled with ID: ${notificationId}`);
     return notificationId;
   } catch (e) {
-    console.error('Failed to schedule notification:', e);
+    console.error('[scheduleNotification] Error scheduling notification:', {
+      error: String(e),
+      title: payload.title,
+      triggerDate: triggerDate.toISOString(),
+    });
     return null;
   }
 };

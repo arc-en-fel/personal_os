@@ -75,7 +75,7 @@ export const scheduleReminderNotification = async (
   try {
     // Check quiet hours
     if (reminder.notification_type === 'notification' && isInQuietHours(preferences)) {
-      console.log(`Reminder ${reminder.id} suppressed by quiet hours`);
+      console.log(`[scheduleReminderNotification] Reminder ${reminder.id} suppressed by quiet hours`);
       return false;
     }
 
@@ -85,7 +85,8 @@ export const scheduleReminderNotification = async (
     const now = new Date();
 
     // Diagnostic logs
-    console.log(`[scheduleReminderNotification] Diagnostic Info:`);
+    console.log(`[scheduleReminderNotification] Processing reminder ${reminder.id}:`);
+    console.log(`  Event: ${eventTitle}`);
     console.log(`  Current time: ${now.toISOString()}`);
     console.log(`  Raw reminder timestamp: ${reminder.scheduled_time}`);
     console.log(`  Parsed trigger date: ${triggerDate.toISOString()}`);
@@ -93,12 +94,14 @@ export const scheduleReminderNotification = async (
 
     // VALIDATION: Skip if reminder is in the past
     if (triggerDate <= now) {
-      console.log(`Reminder ${reminder.id} skipped - scheduled time is in the past (${triggerDate.toISOString()} <= ${now.toISOString()})`);
+      console.log(`[scheduleReminderNotification] Reminder ${reminder.id} skipped - scheduled time is in the past (${triggerDate.toISOString()} <= ${now.toISOString()})`);
       return false;
     }
 
     // Schedule push notification
     if (reminder.notification_type === 'notification') {
+      console.log(`[scheduleReminderNotification] Scheduling push notification for reminder ${reminder.id}`);
+      
       const notificationId = await scheduleNotification(
         {
           title: 'Reminder',
@@ -116,18 +119,22 @@ export const scheduleReminderNotification = async (
       if (notificationId) {
         // Log delivery attempt
         await logNotificationDelivery(reminder.user_id, reminder.id, 'push', 'sent');
-        console.log(`Scheduled reminder ${reminder.id} for ${triggerDate.toISOString()}`);
+        console.log(`[scheduleReminderNotification] Successfully scheduled reminder ${reminder.id} for ${triggerDate.toISOString()}`);
         return true;
+      } else {
+        console.error(`[scheduleReminderNotification] Failed to schedule notification for reminder ${reminder.id}`);
+        await logNotificationDelivery(reminder.user_id, reminder.id, 'push', 'failed');
+        return false;
       }
     } else if (reminder.notification_type === 'email') {
       // For email reminders, log as pending (would need backend service to send)
-      console.log(`Email reminder ${reminder.id} scheduled for ${triggerDate.toISOString()}`);
+      console.log(`[scheduleReminderNotification] Email reminder ${reminder.id} scheduled for ${triggerDate.toISOString()}`);
       return true;
     }
 
     return false;
   } catch (e) {
-    console.error('Error scheduling reminder notification:', e);
+    console.error(`[scheduleReminderNotification] Error processing reminder ${reminder.id}:`, e);
     await logNotificationDelivery(reminder.user_id, reminder.id, reminder.notification_type === 'email' ? 'email' : 'push', 'failed');
     return false;
   }
