@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/src/providers/AuthProvider';
@@ -21,6 +21,9 @@ const REMINDER_OPTIONS = [
   { label: '30 min', minutes: 30 },
 ];
 
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const MINUTES = Array.from({ length: 60 }, (_, i) => i);
+
 export default function CreateEventScreen() {
   const { session } = useAuth();
   const [title, setTitle] = useState('');
@@ -28,6 +31,52 @@ export default function CreateEventScreen() {
   const [reminderMinutes, setReminderMinutes] = useState<number | null>(30);
   const [saving, setSaving] = useState(false);
 
+  // Date/Time picker state
+  const [eventDate, setEventDate] = useState(new Date());
+  const [eventHour, setEventHour] = useState(getNextHour());
+  const [eventMinute, setEventMinute] = useState(0);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+
+  // Helper: Get next full hour from now
+  function getNextHour() {
+    const now = new Date();
+    const nextHour = new Date(now);
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+    return nextHour.getHours();
+  }
+
+  // Format date for display
+  const formatDate = (date: Date) => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (date.toDateString() === today.toDateString()) return 'Today';
+    if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
+
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  // Format time for display
+  const formatTime = (hour: number, minute: number) => {
+    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  };
+
+  // Get array of dates to display (today + next 30 days)
+  const dateOptions = useMemo(() => {
+    const dates = [];
+    const today = new Date();
+    for (let i = 0; i < 30; i++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() + i);
+      date.setHours(0, 0, 0, 0);
+      dates.push(date);
+    }
+    return dates;
+  }, []);
+
+  // Validate and create event
   const validateAndCreate = async () => {
     if (!title.trim()) {
       Alert.alert('Error', 'Enter event title');
@@ -39,13 +88,22 @@ export default function CreateEventScreen() {
       return;
     }
 
+    // Build start datetime from selected date and time
+    const startDateTime = new Date(eventDate);
+    startDateTime.setHours(eventHour, eventMinute, 0, 0);
+
+    // Validate: event must be in future
+    const now = new Date();
+    if (startDateTime <= now) {
+      Alert.alert('Error', 'Event must be in the future');
+      return;
+    }
+
+    const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60 * 1000);
+
     setSaving(true);
 
     try {
-      const now = new Date();
-      const startDateTime = new Date(now);
-      const endDateTime = new Date(now.getTime() + durationMinutes * 60 * 1000);
-
       // Insert event
       const { data: eventData, error: eventError } = await supabase
         .from('calendar_events')
@@ -65,29 +123,47 @@ export default function CreateEventScreen() {
       if (eventError) throw eventError;
       if (!eventData) throw new Error('No event data returned');
 
+      console.log('[CreateEvent] Event created:', {
+        title: title.trim(),
+        startTime: startDateTime.toISOString(),
+        endTime: endDateTime.toISOString(),
+      });
+
       // Create reminder if specified
       if (reminderMinutes !== null) {
         const reminderScheduledTime = new Date(startDateTime.getTime() - reminderMinutes * 60 * 1000);
 
-        console.log(`[CreateEvent] Creating reminder:`);
-        console.log(`  Event start: ${startDateTime.toISOString()}`);
-        console.log(`  Reminder time: ${reminderScheduledTime.toISOString()}`);
-        console.log(`  In future? ${reminderScheduledTime > new Date()}`);
-
-        await supabase.from('event_reminders').insert({
-          user_id: session.user.id,
-          event_id: eventData.id,
-          title: `Reminder: ${title}`,
-          minutes_before: reminderMinutes,
-          notification_type: 'notification',
-          scheduled_time: reminderScheduledTime.toISOString(),
-          enabled: true,
+        console.log('[CreateEvent] Creating reminder:', {
+          eventStart: startDateTime.toISOString(),
+          minutesBefore: reminderMinutes,
+          reminderTime: reminderScheduledTime.toISOString(),
+          currentTime: now.toISOString(),
+          inFuture: reminderScheduledTime > now,
         });
+
+        const { error: reminderError } = await supabase
+          .from('event_reminders')
+          .insert({
+            user_id: session.user.id,
+            event_id: eventData.id,
+            title: `Reminder: ${title}`,
+            minutes_before: reminderMinutes,
+            notification_type: 'notification',
+            scheduled_time: reminderScheduledTime.toISOString(),
+            enabled: true, // CRITICAL: must be true for scheduler to find it
+          });
+
+        if (reminderError) {
+          console.warn('[CreateEvent] Reminder creation failed:', reminderError);
+        } else {
+          console.log('[CreateEvent] Reminder created successfully');
+        }
       }
 
       Alert.alert('✓ Event created!');
       router.back();
     } catch (e) {
+      console.error('[CreateEvent] Error:', e);
       Alert.alert('Error', String(e));
     } finally {
       setSaving(false);
@@ -96,19 +172,19 @@ export default function CreateEventScreen() {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {/* Header */}
         <Pressable onPress={() => router.back()}>
           <Text style={styles.back}>‹ Back</Text>
         </Pressable>
 
-        <Text style={styles.title}>Quick Event</Text>
+        <Text style={styles.title}>New Event</Text>
 
         {/* Title Input */}
         <View style={styles.mainSection}>
-          <Text style={styles.label}>Event Title *</Text>
+          <Text style={styles.label}>Title *</Text>
           <TextInput
-            placeholder="Meeting, Workout, Call..."
+            placeholder="Meeting, Workout..."
             placeholderTextColor={colors.muted}
             value={title}
             onChangeText={setTitle}
@@ -116,6 +192,92 @@ export default function CreateEventScreen() {
             autoFocus
             maxLength={100}
           />
+        </View>
+
+        {/* Date/Time Section */}
+        <View style={styles.section}>
+          <Text style={styles.label}>Date & Time</Text>
+
+          {/* Date Selector */}
+          <View style={styles.dateTimeRow}>
+            <Pressable
+              onPress={() => setShowDatePicker(!showDatePicker)}
+              style={styles.pickerButton}
+            >
+              <Text style={styles.pickerButtonText}>📅 {formatDate(eventDate)}</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setShowTimePicker(!showTimePicker)}
+              style={styles.pickerButton}
+            >
+              <Text style={styles.pickerButtonText}>🕐 {formatTime(eventHour, eventMinute)}</Text>
+            </Pressable>
+          </View>
+
+          {/* Date Picker - Inline */}
+          {showDatePicker && (
+            <View style={styles.pickerContainer}>
+              <ScrollView style={styles.dateScroll} showsVerticalScrollIndicator={false}>
+                {dateOptions.map((date, i) => {
+                  const isSelected = date.toDateString() === eventDate.toDateString();
+                  return (
+                    <Pressable
+                      key={i}
+                      onPress={() => {
+                        setEventDate(date);
+                        setShowDatePicker(false);
+                      }}
+                      style={[styles.dateOption, isSelected && styles.dateOptionSelected]}
+                    >
+                      <Text style={[styles.dateOptionText, isSelected && styles.dateOptionTextSelected]}>
+                        {formatDate(date)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Time Picker - Inline */}
+          {showTimePicker && (
+            <View style={styles.timePickerContainer}>
+              <View style={styles.timeColumn}>
+                <Text style={styles.timeLabel}>Hour</Text>
+                <ScrollView style={styles.timeScroll} showsVerticalScrollIndicator={false}>
+                  {HOURS.map(h => (
+                    <Pressable
+                      key={h}
+                      onPress={() => setEventHour(h)}
+                      style={[styles.timeOption, eventHour === h && styles.timeOptionSelected]}
+                    >
+                      <Text style={[styles.timeOptionText, eventHour === h && styles.timeOptionTextSelected]}>
+                        {h.toString().padStart(2, '0')}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={styles.timeColumn}>
+                <Text style={styles.timeLabel}>Minute</Text>
+                <ScrollView style={styles.timeScroll} showsVerticalScrollIndicator={false}>
+                  {MINUTES.map(m => (
+                    <Pressable
+                      key={m}
+                      onPress={() => setEventMinute(m)}
+                      style={[styles.timeOption, eventMinute === m && styles.timeOptionSelected]}
+                    >
+                      <Text style={[styles.timeOptionText, eventMinute === m && styles.timeOptionTextSelected]}>
+                        {m.toString().padStart(2, '0')}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Duration */}
@@ -170,7 +332,7 @@ export default function CreateEventScreen() {
           </View>
         </View>
 
-        {/* Create Button */}
+        {/* Buttons */}
         <View style={styles.spacing} />
         <Pressable
           onPress={() => void validateAndCreate()}
@@ -205,7 +367,7 @@ const styles = StyleSheet.create({
   mainSection: { marginBottom: spacing.xl },
   section: { marginBottom: spacing.xl },
   label: { color: colors.ink, fontSize: 13, fontWeight: '800', marginBottom: spacing.md },
-  
+
   titleInput: {
     backgroundColor: colors.card,
     borderColor: colors.line,
@@ -217,7 +379,58 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
 
-  // Duration options - horizontal
+  // Date/Time buttons
+  dateTimeRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  pickerButton: {
+    backgroundColor: colors.card,
+    borderColor: colors.line,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    flex: 1,
+    alignItems: 'center',
+  },
+  pickerButtonText: { color: colors.ink, fontSize: 14, fontWeight: '600' },
+
+  // Date picker inline
+  pickerContainer: {
+    backgroundColor: colors.card,
+    borderRadius: 8,
+    marginTop: spacing.md,
+    maxHeight: 250,
+  },
+  dateScroll: { maxHeight: 250 },
+  dateOption: { paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.line },
+  dateOptionSelected: { backgroundColor: colors.sageDark },
+  dateOptionText: { color: colors.ink, fontSize: 14 },
+  dateOptionTextSelected: { color: colors.card, fontWeight: '800' },
+
+  // Time picker inline
+  timePickerContainer: {
+    flexDirection: 'row',
+    backgroundColor: colors.card,
+    borderRadius: 8,
+    marginTop: spacing.md,
+    height: 200,
+    overflow: 'hidden',
+  },
+  timeColumn: {
+    flex: 1,
+    borderRightWidth: 1,
+    borderRightColor: colors.line,
+  },
+  timeLabel: { textAlign: 'center', color: colors.muted, fontSize: 11, fontWeight: '800', paddingVertical: spacing.sm },
+  timeScroll: { flex: 1 },
+  timeOption: { paddingVertical: spacing.md, paddingHorizontal: spacing.sm, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.line },
+  timeOptionSelected: { backgroundColor: colors.coral },
+  timeOptionText: { color: colors.muted, fontSize: 14, fontWeight: '600' },
+  timeOptionTextSelected: { color: colors.card, fontWeight: '800' },
+
+  // Duration options
   optionsRow: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -241,7 +454,7 @@ const styles = StyleSheet.create({
   optionText: { color: colors.ink, fontSize: 13, fontWeight: '600' },
   optionTextActive: { color: colors.card, fontWeight: '800' },
 
-  // Reminder options - grid
+  // Reminder options grid
   optionsGrid: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -283,6 +496,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelButtonText: { color: colors.muted, fontSize: 16, fontWeight: '700' },
-  
+
   buttonDisabled: { opacity: 0.5 },
 });

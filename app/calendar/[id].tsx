@@ -141,6 +141,7 @@ export default function CalendarEventScreen() {
           notification_type: selectedNotificationType,
           title: `Reminder: ${event.title}`,
           scheduled_time: new Date(new Date(event.start_time).getTime() - selectedReminderMinutes * 60000).toISOString(),
+          enabled: true, // CRITICAL: Must be true for scheduler to find it
         })
         .select()
         .single();
