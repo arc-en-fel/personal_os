@@ -7,6 +7,7 @@
     "scheme": "personalos",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "icon": "./assets/icon-1024x1024.png",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -24,11 +25,13 @@
       "typedRoutes": true
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "icon": "./assets/icon-1024x1024.png"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#F4F1EA"
+        "foregroundImage": "./assets/icon-1024x1024.png",
+        "backgroundColor": "#607A62"
       },
       "package": "com.deepak_bhaskaran.personalos"
     },

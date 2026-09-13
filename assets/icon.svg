@@ -1,0 +1,19 @@
+<svg viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="192" height="192" fill="#607A62" rx="40"/>
+  
+  <!-- Outer orbital ring -->
+  <circle cx="96" cy="96" r="68" fill="none" stroke="#B5C9B2" stroke-width="5" opacity="0.6"/>
+  
+  <!-- Inner orbital ring -->
+  <circle cx="96" cy="96" r="45" fill="none" stroke="#D8755B" stroke-width="4" opacity="0.7"/>
+  
+  <!-- Central sphere -->
+  <circle cx="96" cy="96" r="20" fill="#FFFDF9"/>
+  
+  <!-- Accent dots on orbits -->
+  <circle cx="96" cy="36" r="6" fill="#D8755B"/>
+  <circle cx="140" cy="96" r="6" fill="#B5C9B2"/>
+  <circle cx="96" cy="156" r="6" fill="#D8755B"/>
+  <circle cx="52" cy="96" r="6" fill="#B5C9B2"/>
+</svg>
