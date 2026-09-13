@@ -2,7 +2,7 @@
   "expo": {
     "name": "Personal OS",
     "slug": "personal-os",
-    "version": "1.0.0",
+    "version": "1.0.6",
     "orientation": "portrait",
     "scheme": "personalos",
     "userInterfaceStyle": "light",
