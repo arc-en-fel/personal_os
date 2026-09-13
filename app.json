@@ -8,6 +8,11 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "icon": "./assets/icon-1024x1024.png",
+    "splash": {
+      "image": "./assets/logo-1024x1024.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F7F5F0"
+    },
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -26,14 +31,24 @@
     },
     "ios": {
       "supportsTablet": true,
-      "icon": "./assets/icon-1024x1024.png"
+      "icon": "./assets/icon-1024x1024.png",
+      "splash": {
+        "image": "./assets/logo-1024x1024.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#F7F5F0"
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon-1024x1024.png",
         "backgroundColor": "#607A62"
       },
-      "package": "com.deepak_bhaskaran.personalos"
+      "package": "com.deepak_bhaskaran.personalos",
+      "splash": {
+        "image": "./assets/logo-1024x1024.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#F7F5F0"
+      }
     },
     "extra": {
       "router": {},
