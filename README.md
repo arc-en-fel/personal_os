@@ -1,4 +1,4 @@
-# Personal OS
+# orbi
 
 Phase 1 foundation for a private Expo React Native application.
 

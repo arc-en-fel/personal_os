@@ -121,7 +121,7 @@ jobs:
         with:
           files: ./app.apk
           body: |
-            # Personal Tracker ${{ github.ref_name }}
+            # orbi ${{ github.ref_name }}
 
             ## Installation
 

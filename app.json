@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Personal OS",
-    "slug": "personal-os",
+    "name": "orbi",
+    "slug": "orbi",
     "version": "1.0.6",
     "orientation": "portrait",
     "scheme": "personalos",

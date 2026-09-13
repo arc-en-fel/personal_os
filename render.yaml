@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: personal-os-statement-parser
+    name: orbi-statement-parser
     runtime: docker
     dockerfilePath: ./services/statement-parser/Dockerfile
     dockerContext: ./services/statement-parser
